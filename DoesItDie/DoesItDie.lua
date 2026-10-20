@@ -50,11 +50,12 @@ local KNOWN_TICK_INTERVALS = {
 -- DoTs whose ticks aren't even: each tick is the average tick times its factor (factors average 1, so the
 -- tooltip total still holds). Agony is back-loaded; seen in-game on Forever (log 166015.8, 72 over 24s):
 -- ticks 3,3,3,3 then 6,6,... then 9s. Everything else ticks evenly.
-local AGONY_SHAPE = { 0.5, 0.5, 0.5, 0.5, 1, 1, 1, 1, 1.5, 1.5, 1.5, 1.5 }
-local TICK_SHAPES = {
-    ["Bane of Agony"] = AGONY_SHAPE, -- Forever's name
-    ["Curse of Agony"] = AGONY_SHAPE,
-}
+local TICK_SHAPES = {}
+do
+    local agony = { 0.5, 0.5, 0.5, 0.5, 1, 1, 1, 1, 1.5, 1.5, 1.5, 1.5 }
+    TICK_SHAPES["Bane of Agony"] = agony -- Forever's name
+    TICK_SHAPES["Curse of Agony"] = agony
+end
 
 -- Descriptions that don't name their school.
 local SCHOOL_BY_NAME = {
@@ -121,6 +122,7 @@ local DEFAULTS = {
     customIconAnchor = "",
     -- Accuracy
     waitFirstTick = "off",
+    estimateDuringCast = true,
     -- Nameplates (Nameplates.lua): their own look, since enemy plates are red. Defaults read well on red.
     nameplateMode = "markerIcon",
     nameplateIconSize = 18,
@@ -496,6 +498,29 @@ local function comboPointsForCast()
     return points, source
 end
 
+-- A DoT as it stands the moment it's applied, before any tick.
+local function newDot(spellID, tickKey, name, total, school, duration, statedInterval, now)
+    local interval = statedInterval or KNOWN_TICK_INTERVALS[name] or DEFAULT_TICK_INTERVAL
+    return {
+        spellID = spellID,
+        tickKey = tickKey,
+        school = SCHOOL_BY_NAME[name] or school,
+        total = total,
+        duration = duration,
+        interval = interval,
+        totalTicks = math.max(1, math.floor(duration / interval + 0.5)),
+        shape = TICK_SHAPES[name],
+        travel = PROJECTILE_DOTS[name] and PROJECTILE_TRAVEL or nil,
+        appliedAt = now,
+        expiresAt = now + duration,
+        nextTickAt = now + interval,
+        tickSum = 0,        -- non-crit ticks only
+        normalTicks = 0,
+        ticksSeen = 0,      -- including crits
+        missed = 0,
+    }
+end
+
 -- Returns the target key the DoT was applied to, or nil if the cast wasn't a tracked DoT.
 local function onPlayerCast(spellID, castGUID)
     local key = castTargetKey(castGUID)
@@ -519,29 +544,10 @@ local function onPlayerCast(spellID, castGUID)
     if not key then return end
 
     local now = GetTime()
-    local interval = statedInterval or KNOWN_TICK_INTERVALS[name] or DEFAULT_TICK_INTERVAL
-    school = SCHOOL_BY_NAME[name] or school
     dotsByTarget[key] = dotsByTarget[key] or {}
     local previous = dotsByTarget[key][name]
-    dotsByTarget[key][name] = {
-        spellID = spellID,
-        tickKey = tickKey,
-        school = school,
-        total = total,
-        duration = duration,
-        interval = interval,
-        totalTicks = math.max(1, math.floor(duration / interval + 0.5)),
-        shape = TICK_SHAPES[name],
-        travel = PROJECTILE_DOTS[name] and PROJECTILE_TRAVEL or nil,
-        appliedAt = now,
-        expiresAt = now + duration,
-        nextTickAt = now + interval,
-        tickSum = 0,        -- non-crit ticks only
-        normalTicks = 0,
-        ticksSeen = 0,      -- including crits
-        missed = 0,
-    }
-    local dot = dotsByTarget[key][name]
+    local dot = newDot(spellID, tickKey, name, total, school, duration, statedInterval, now)
+    dotsByTarget[key][name] = dot
     lastDotCast = { key = key, name = name, dot = dot, previous = previous, at = now }
     local learned = tickKey and db.ticks[tickKey]
     -- The starting estimate is shaky without a learned tick size (description numbers leave out spell power
@@ -549,7 +555,7 @@ local function onPlayerCast(spellID, castGUID)
     dot.unsure = not learned
     trace(string.format("CAST %s (id %d)%s: %d dmg over %ss, school %d, tick every %ss, per-tick %s%s%s", name, spellID,
         isFinisher and string.format(" %s combo points (%s)", comboPoints or "?", comboSource) or "",
-        total, duration, school, interval, learned and ("learned " .. learned) or "from description",
+        total, duration, dot.school, dot.interval, learned and ("learned " .. learned) or "from description",
         isWaiting(dot) and ", waiting for first tick" or "",
         key ~= unitKey("target") and (" on " .. tostring(key) .. ", the target when sent") or ""))
     local avoided = avoidJustBefore(key)
@@ -559,6 +565,66 @@ local function onPlayerCast(spellID, castGUID)
         return nil
     end
     return key, isWaiting(dot)
+end
+
+-- "Estimate during casting": a DoT with a cast time shows from UNIT_SPELLCAST_START, with the estimate its
+-- cast would make. It's kept out of dotsByTarget, so ticks never match it and housekeeping leaves it alone,
+-- and it stands in for a DoT of the same name that the cast would refresh (replaces, never adds). On success
+-- onPlayerCast takes over exactly as without it. A failed or interrupted cast, or a target change, just drops
+-- it, so a DoT it was about to refresh keeps ticking as if nothing happened. STOP ends every cast, successful
+-- or not, and may come just before SUCCEEDED, so a stopped cast is only dropped if no success follows shortly.
+local CAST_STOP_GRACE = 0.5
+local CAST_MAX_SECONDS = 15 -- a lost end event never leaves an estimate behind
+local castInProgress -- { key, name, dot, castGUID, spellID, startedAt, stoppedAt }
+
+-- Whether an event's castGUID (or, when either GUID is unreadable, its spell ID) is the cast in progress.
+local function sameCast(cast, castGUID, spellID)
+    if cast.castGUID and castGUID ~= nil and not isSecret(castGUID) then return castGUID == cast.castGUID end
+    return not isSecret(spellID) and spellID == cast.spellID
+end
+
+local function dropCastInProgress(reason)
+    if not castInProgress then return end
+    trace("CASTING " .. castInProgress.name .. " " .. reason .. "; estimate removed")
+    castInProgress = nil
+end
+
+-- UNIT_SPELLCAST_START (player). Returns the target key when a DoT now shows for the cast.
+local function onCastStart(castGUID, spellID)
+    castInProgress = nil
+    if not db.estimateDuringCast or isSecret(spellID) then return end
+    local ok, name, desc = pcall(spellNameAndDescription, spellID)
+    if not ok or not name or isSecret(name) or IGNORED_SPELLS[name] or isFinisherDescription(desc) then return end
+    local total, school, duration, statedInterval = parseDot(desc, 1)
+    if not total then return end
+    local key = unitKey("target")
+    if not key then return end
+    local now = GetTime()
+    local dot = newDot(spellID, spellID, name, total, school, duration, statedInterval, now)
+    local learned = db.ticks[spellID]
+    dot.unsure = not learned
+    dot.provisional = true
+    castInProgress = { key = key, name = name, dot = dot, spellID = spellID, startedAt = now,
+        castGUID = not isSecret(castGUID) and castGUID or nil }
+    trace(string.format("CASTING %s (id %d): %d dmg over %ss, per-tick %s%s", name, spellID, total, duration,
+        learned and ("learned " .. learned) or "from description", isWaiting(dot) and ", waiting for first tick" or ""))
+    return key
+end
+
+-- UNIT_SPELLCAST_SUCCEEDED (player), just before onPlayerCast: the cast's own DoT replaces the estimate.
+local function onCastSucceeded(castGUID, spellID)
+    if castInProgress and sameCast(castInProgress, castGUID, spellID) then castInProgress = nil end
+end
+
+-- UNIT_SPELLCAST_STOP / FAILED / INTERRUPTED (player). Returns true when the estimate was removed.
+local function onCastEnded(event, castGUID, spellID)
+    if not castInProgress or not sameCast(castInProgress, castGUID, spellID) then return end
+    if event == "UNIT_SPELLCAST_STOP" then
+        castInProgress.stoppedAt = castInProgress.stoppedAt or GetTime()
+        return
+    end
+    dropCastInProgress(event == "UNIT_SPELLCAST_INTERRUPTED" and "interrupted" or "failed")
+    return true
 end
 
 -- Seconds between now and the nearest expected tick time, and that tick's index. Anchored on the first tick
@@ -770,6 +836,13 @@ local function housekeep(now)
         end
         if next(dots) == nil then dotsByTarget[key] = nil end
     end
+    if castInProgress then
+        if castInProgress.stoppedAt and now - castInProgress.stoppedAt > CAST_STOP_GRACE then
+            dropCastInProgress("stopped without succeeding")
+        elseif now - castInProgress.startedAt > CAST_MAX_SECONDS then
+            dropCastInProgress("never finished")
+        end
+    end
 end
 
 local function remainingDamage(dot)
@@ -784,16 +857,21 @@ local function remainingDamage(dot)
 end
 
 -- Remaining damage per DoT on a mob (by unitKey), oldest application first. DoTs still waiting for their first
--- tick are left out.
+-- tick are left out. A DoT being cast on the mob replaces the one of the same name it would refresh.
 local function dotBreakdown(key)
     local dots = key and dotsByTarget[key]
+    local cast = key and castInProgress and castInProgress.key == key and castInProgress or nil
     local list = {}
-    if not dots then return list end
-    for name, dot in pairs(dots) do
-        if not isWaiting(dot) then
+    if not dots and not cast then return list end
+    for name, dot in pairs(dots or {}) do
+        if not isWaiting(dot) and not (cast and name == cast.name) then
             table.insert(list, { name = name, school = dot.school, appliedAt = dot.appliedAt,
                 damage = remainingDamage(dot) })
         end
+    end
+    if cast and not isWaiting(cast.dot) then
+        table.insert(list, { name = cast.name, school = cast.dot.school, appliedAt = cast.dot.appliedAt,
+            damage = remainingDamage(cast.dot), provisional = true })
     end
     table.sort(list, function(a, b) return a.appliedAt < b.appliedAt end)
     return list
@@ -932,11 +1010,14 @@ skull:SetPoint("RIGHT", skullBar:GetStatusBarTexture(), "RIGHT")
 
 local skullPulse = skull:CreateAnimationGroup()
 skullPulse:SetLooping("BOUNCE")
-local skullPulseAlpha = skullPulse:CreateAnimation("Alpha")
-skullPulseAlpha:SetFromAlpha(1)
-skullPulseAlpha:SetToAlpha(0.45)
-skullPulseAlpha:SetDuration(0.7)
-skullPulseAlpha:SetSmoothing("IN_OUT")
+-- (Setup-only locals go in do ... end blocks: the file is close to Lua's 200 top-level locals limit.)
+do
+    local skullPulseAlpha = skullPulse:CreateAnimation("Alpha")
+    skullPulseAlpha:SetFromAlpha(1)
+    skullPulseAlpha:SetToAlpha(0.45)
+    skullPulseAlpha:SetDuration(0.7)
+    skullPulseAlpha:SetSmoothing("IN_OUT")
+end
 
 -- /did skull diagnostics: an unclipped skull just above the portrait, to tell a placement/strata
 -- problem apart from a problem with the clipped status-bar trick.
@@ -1006,68 +1087,76 @@ flashTex:SetBlendMode("ADD")
 flashTex:SetAlpha(0)
 
 local flashAnim = flashTex:CreateAnimationGroup()
-local flashIn = flashAnim:CreateAnimation("Alpha")
-flashIn:SetFromAlpha(0)
-flashIn:SetToAlpha(0.8)
-flashIn:SetDuration(0.08)
-flashIn:SetOrder(1)
-local flashOut = flashAnim:CreateAnimation("Alpha")
-flashOut:SetFromAlpha(0.8)
-flashOut:SetToAlpha(0)
-flashOut:SetDuration(0.5)
-flashOut:SetSmoothing("OUT")
-flashOut:SetOrder(2)
+do
+    local flashIn = flashAnim:CreateAnimation("Alpha")
+    flashIn:SetFromAlpha(0)
+    flashIn:SetToAlpha(0.8)
+    flashIn:SetDuration(0.08)
+    flashIn:SetOrder(1)
+    local flashOut = flashAnim:CreateAnimation("Alpha")
+    flashOut:SetFromAlpha(0.8)
+    flashOut:SetToAlpha(0)
+    flashOut:SetDuration(0.5)
+    flashOut:SetSmoothing("OUT")
+    flashOut:SetOrder(2)
+end
 
 -- The outline tiles its dash texture along each edge, so it works whatever the (secret) span length is.
 local outlineLayer = CreateFrame("Frame", nil, remainingBar)
 outlineLayer:SetAllPoints()
 
 local edges = {} -- { texture, horizontal }
-local function makeEdge(horizontal, point1, point2)
-    local edge = outlineLayer:CreateTexture(nil, "OVERLAY", nil, 7)
-    edge:SetPoint(point1, span, point1)
-    edge:SetPoint(point2, span, point2)
-    table.insert(edges, { texture = edge, horizontal = horizontal })
+do
+    local function makeEdge(horizontal, point1, point2)
+        local edge = outlineLayer:CreateTexture(nil, "OVERLAY", nil, 7)
+        edge:SetPoint(point1, span, point1)
+        edge:SetPoint(point2, span, point2)
+        table.insert(edges, { texture = edge, horizontal = horizontal })
+    end
+    makeEdge(true, "TOPLEFT", "TOPRIGHT")
+    makeEdge(true, "BOTTOMLEFT", "BOTTOMRIGHT")
+    makeEdge(false, "TOPLEFT", "BOTTOMLEFT")
+    makeEdge(false, "TOPRIGHT", "BOTTOMRIGHT")
 end
-makeEdge(true, "TOPLEFT", "TOPRIGHT")
-makeEdge(true, "BOTTOMLEFT", "BOTTOMRIGHT")
-makeEdge(false, "TOPLEFT", "BOTTOMLEFT")
-makeEdge(false, "TOPRIGHT", "BOTTOMRIGHT")
 
 local outlinePulse = outlineLayer:CreateAnimationGroup()
 outlinePulse:SetLooping("BOUNCE")
-local outlinePulseAlpha = outlinePulse:CreateAnimation("Alpha")
-outlinePulseAlpha:SetFromAlpha(1)
-outlinePulseAlpha:SetToAlpha(0.3)
-outlinePulseAlpha:SetDuration(0.9)
-outlinePulseAlpha:SetSmoothing("IN_OUT")
+do
+    local outlinePulseAlpha = outlinePulse:CreateAnimation("Alpha")
+    outlinePulseAlpha:SetFromAlpha(1)
+    outlinePulseAlpha:SetToAlpha(0.3)
+    outlinePulseAlpha:SetDuration(0.9)
+    outlinePulseAlpha:SetSmoothing("IN_OUT")
+end
 
 -- Glow: soft halo around the span in the outline color, one gradient strip per side fading outward.
 -- Lives on the outline layer so "Pulse outline" pulses it too.
 local glows = {} -- { texture, side }
-local function makeGlow(side)
-    local glow = outlineLayer:CreateTexture(nil, "BORDER")
-    glow:SetTexture(WHITE)
-    glow:SetBlendMode("ADD")
-    if side == "top" then
-        glow:SetPoint("BOTTOMLEFT", span, "TOPLEFT")
-        glow:SetPoint("BOTTOMRIGHT", span, "TOPRIGHT")
-    elseif side == "bottom" then
-        glow:SetPoint("TOPLEFT", span, "BOTTOMLEFT")
-        glow:SetPoint("TOPRIGHT", span, "BOTTOMRIGHT")
-    elseif side == "left" then
-        glow:SetPoint("TOPRIGHT", span, "TOPLEFT")
-        glow:SetPoint("BOTTOMRIGHT", span, "BOTTOMLEFT")
-    else
-        glow:SetPoint("TOPLEFT", span, "TOPRIGHT")
-        glow:SetPoint("BOTTOMLEFT", span, "BOTTOMRIGHT")
+do
+    local function makeGlow(side)
+        local glow = outlineLayer:CreateTexture(nil, "BORDER")
+        glow:SetTexture(WHITE)
+        glow:SetBlendMode("ADD")
+        if side == "top" then
+            glow:SetPoint("BOTTOMLEFT", span, "TOPLEFT")
+            glow:SetPoint("BOTTOMRIGHT", span, "TOPRIGHT")
+        elseif side == "bottom" then
+            glow:SetPoint("TOPLEFT", span, "BOTTOMLEFT")
+            glow:SetPoint("TOPRIGHT", span, "BOTTOMRIGHT")
+        elseif side == "left" then
+            glow:SetPoint("TOPRIGHT", span, "TOPLEFT")
+            glow:SetPoint("BOTTOMRIGHT", span, "BOTTOMLEFT")
+        else
+            glow:SetPoint("TOPLEFT", span, "TOPRIGHT")
+            glow:SetPoint("BOTTOMLEFT", span, "BOTTOMRIGHT")
+        end
+        table.insert(glows, { texture = glow, side = side })
     end
-    table.insert(glows, { texture = glow, side = side })
+    makeGlow("top")
+    makeGlow("bottom")
+    makeGlow("left")
+    makeGlow("right")
 end
-makeGlow("top")
-makeGlow("bottom")
-makeGlow("left")
-makeGlow("right")
 
 -- Clipped to the span: effects that move across the whole health bar but should only show inside the
 -- marker (scrolling stripes, the shine sweep). Clipping does the work Lua can't, since the span's width
@@ -1085,9 +1174,11 @@ scrollingStripes:SetHorizTile(true)
 scrollingStripes:SetVertTile(true)
 local stripeScroll = scrollingStripes:CreateAnimationGroup()
 stripeScroll:SetLooping("REPEAT")
-local stripeMove = stripeScroll:CreateAnimation("Translation")
-stripeMove:SetOffset(STRIPE_SCROLL_PERIOD, 0)
-stripeMove:SetDuration(0.6)
+do
+    local stripeMove = stripeScroll:CreateAnimation("Translation")
+    stripeMove:SetOffset(STRIPE_SCROLL_PERIOD, 0)
+    stripeMove:SetDuration(0.6)
+end
 
 local SHINE_WIDTH = 36
 local SHINE_DURATION = 0.9
@@ -1115,34 +1206,36 @@ spark:SetPoint("TOP", span, "TOPRIGHT", 0, 7)
 spark:SetPoint("BOTTOM", span, "BOTTOMRIGHT", 0, -7)
 spark:SetAlpha(0)
 
--- Scale animations use SetScaleFrom/To on current clients; SetScale (relative) on older ones.
-local function scaleStep(group, fromX, fromY, toX, toY, duration, order, smoothing)
-    local anim = group:CreateAnimation("Scale")
-    if anim.SetScaleFrom then
-        anim:SetScaleFrom(fromX, fromY)
-        anim:SetScaleTo(toX, toY)
-    else
-        anim:SetScale(toX / fromX, toY / fromY)
-    end
-    anim:SetDuration(duration)
-    anim:SetOrder(order)
-    if smoothing then anim:SetSmoothing(smoothing) end
-end
-
-local function alphaStep(group, from, to, duration, order, smoothing)
-    local anim = group:CreateAnimation("Alpha")
-    anim:SetFromAlpha(from)
-    anim:SetToAlpha(to)
-    anim:SetDuration(duration)
-    anim:SetOrder(order)
-    if smoothing then anim:SetSmoothing(smoothing) end
-end
-
 local sparkPunch = spark:CreateAnimationGroup()
-scaleStep(sparkPunch, 1, 1, 1.9, 1.3, 0.08, 1)
-alphaStep(sparkPunch, 0, 1, 0.08, 1)
-scaleStep(sparkPunch, 1.9, 1.3, 1, 1, 0.45, 2, "OUT")
-alphaStep(sparkPunch, 1, 0, 0.45, 2, "OUT")
+do
+    -- Scale animations use SetScaleFrom/To on current clients; SetScale (relative) on older ones.
+    local function scaleStep(group, fromX, fromY, toX, toY, duration, order, smoothing)
+        local anim = group:CreateAnimation("Scale")
+        if anim.SetScaleFrom then
+            anim:SetScaleFrom(fromX, fromY)
+            anim:SetScaleTo(toX, toY)
+        else
+            anim:SetScale(toX / fromX, toY / fromY)
+        end
+        anim:SetDuration(duration)
+        anim:SetOrder(order)
+        if smoothing then anim:SetSmoothing(smoothing) end
+    end
+
+    local function alphaStep(group, from, to, duration, order, smoothing)
+        local anim = group:CreateAnimation("Alpha")
+        anim:SetFromAlpha(from)
+        anim:SetToAlpha(to)
+        anim:SetDuration(duration)
+        anim:SetOrder(order)
+        if smoothing then anim:SetSmoothing(smoothing) end
+    end
+
+    scaleStep(sparkPunch, 1, 1, 1.9, 1.3, 0.08, 1)
+    alphaStep(sparkPunch, 0, 1, 0.08, 1)
+    scaleStep(sparkPunch, 1.9, 1.3, 1, 1, 0.45, 2, "OUT")
+    alphaStep(sparkPunch, 1, 0, 0.45, 2, "OUT")
+end
 
 local label = remainingBar:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
 
@@ -1798,6 +1891,11 @@ frame:RegisterEvent("PLAYER_TARGET_CHANGED")
 frame:RegisterEvent("PLAYER_ENTERING_WORLD")    -- custom target frames (Frames.lua) exist by then
 frame:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player")
 frame:RegisterUnitEvent("UNIT_SPELLCAST_SENT", "player")   -- combo points, before a finisher spends them
+-- Estimate during casting: DoTs with a cast time show from the cast's start until it ends.
+frame:RegisterUnitEvent("UNIT_SPELLCAST_START", "player")
+frame:RegisterUnitEvent("UNIT_SPELLCAST_STOP", "player")
+frame:RegisterUnitEvent("UNIT_SPELLCAST_FAILED", "player")
+frame:RegisterUnitEvent("UNIT_SPELLCAST_INTERRUPTED", "player")
 frame:RegisterUnitEvent("UNIT_POWER_FREQUENT", "player")   -- keeps a recent combo point reading as backup
 frame:RegisterEvent("UNIT_COMBAT")
 -- Never register COMBAT_LOG_EVENT_UNFILTERED: Forever forbids it and shows a "blocked" popup.
@@ -1832,6 +1930,7 @@ frame:SetScript("OnEvent", function(self, event, ...)
     elseif event == "PLAYER_TARGET_CHANGED" then
         dotsByTarget.target = nil -- only used when the target's GUID is secret
         resetComboCount() -- combo points belong to the target they were built on
+        dropCastInProgress("target changed")
         lastTracedDamage = nil
         attach() -- custom frames may only exist (or be rebuilt) by now
         trace("TARGET changed to " .. (unitKey("target") or "none"))
@@ -1845,8 +1944,18 @@ frame:SetScript("OnEvent", function(self, event, ...)
         local _, powerType = ...
         if not isSecret(powerType) and powerType == "COMBO_POINTS" then rememberComboPoints() end
 
+    elseif event == "UNIT_SPELLCAST_START" then
+        local _, castGUID, spellID = ...
+        if onCastStart(castGUID, spellID) then safeRefresh() end
+
+    elseif event == "UNIT_SPELLCAST_STOP" or event == "UNIT_SPELLCAST_FAILED"
+        or event == "UNIT_SPELLCAST_INTERRUPTED" then
+        local _, castGUID, spellID = ...
+        if onCastEnded(event, castGUID, spellID) then safeRefresh() end
+
     elseif event == "UNIT_SPELLCAST_SUCCEEDED" then
         local _, castGUID, spellID = ...
+        onCastSucceeded(castGUID, spellID)
         local appliedTo, waiting = onPlayerCast(spellID, castGUID)
         safeRefresh()
         -- A DoT waiting for its first tick isn't drawn yet; it flashes when that tick lands instead.
