@@ -3,8 +3,9 @@
 -- the target frame: StatusBars are fed the mob's hidden health and do the comparing.
 --
 -- Widgets are created per Blizzard nameplate frame (which WoW recycles between mobs) and parented to it, so
--- they move, scale and hide with the plate. They're lighter than the target marker: fill, per-DoT segments and a
--- thin outline in the Marker tab's style; no glow, shine, spark or animation.
+-- they move, scale and hide with the plate. With EllesmereUI's nameplates they go on its own plate frame instead
+-- (see findHealthBar). They're lighter than the target marker: fill, per-DoT segments and a thin outline in the
+-- Marker tab's style; no glow, shine, spark or animation.
 --
 -- Also the probe (/did plates): what the addon can reach on nameplates, logged, with a test bar on each.
 
@@ -53,22 +54,44 @@ local function call(fn, ...)
     return describe(pcall(fn, ...))
 end
 
--- Blizzard's health bar inside a nameplate, and the path it was found under.
-local function findHealthBar(plate)
+-- The health bar a nameplate shows, the frame our widgets go on, and the path the bar was found under.
+-- EllesmereUI parks Blizzard's bar on a hidden frame and shows its own plate: a pooled frame parented to the
+-- Blizzard plate while in use, listed by unit in its addon table, with the bar at .health. Our widgets go on
+-- that frame so they fade, scale and hide with it.
+local function findHealthBar(plate, unit)
+    local eui = EllesmereNameplates_NS
+    local euiPlate = type(eui) == "table" and type(eui.plates) == "table" and eui.plates[unit]
+    if type(euiPlate) == "table" and euiPlate.nameplate == plate and euiPlate.health then
+        return euiPlate.health, euiPlate, "EllesmereUI plate.health"
+    end
     local unitFrame = plate.UnitFrame
-    if not unitFrame then return nil, "no UnitFrame" end
-    if unitFrame.healthBar then return unitFrame.healthBar, "UnitFrame.healthBar" end
+    if not unitFrame then return nil, nil, "no UnitFrame" end
+    if unitFrame.healthBar then return unitFrame.healthBar, plate, "UnitFrame.healthBar" end
     local container = unitFrame.HealthBarsContainer
-    if container and container.healthBar then return container.healthBar, "UnitFrame.HealthBarsContainer.healthBar" end
-    if unitFrame.HealthBar then return unitFrame.HealthBar, "UnitFrame.HealthBar" end
-    return nil, "no health bar found"
+    if container and container.healthBar then
+        return container.healthBar, plate, "UnitFrame.HealthBarsContainer.healthBar"
+    end
+    if unitFrame.HealthBar then return unitFrame.HealthBar, plate, "UnitFrame.HealthBar" end
+    return nil, nil, "no health bar found"
+end
+
+-- False only when the bar is known to be hidden, e.g. a plate addon took over and parked Blizzard's: the
+-- marker would otherwise draw over nothing.
+local function barShown(bar)
+    local ok, visible = pcall(bar.IsVisible, bar)
+    return not ok or isSecret(visible) or visible ~= false
 end
 
 ---------------------------------------------------------------------------
 -- Nameplate display
 ---------------------------------------------------------------------------
 
-local widgetsByPlate = {} -- Blizzard nameplate frame -> our widgets
+local widgetsByHost = {} -- frame the widgets are parented to (Blizzard's or EllesmereUI's plate) -> our widgets
+
+local function hideWidgets(w)
+    w.marker:Hide()
+    w.iconWindow:Hide()
+end
 
 local function coverSpan(texture, span)
     texture:SetPoint("TOPLEFT", span, "TOPLEFT")
@@ -82,11 +105,12 @@ local function invisibleBar(parent)
     return bar
 end
 
-local function createWidgets(plate, healthBar)
+-- addonPlate: host is a plate addon's own frame (EllesmereUI), not Blizzard's nameplate.
+local function createWidgets(host, healthBar, addonPlate)
     local w = { healthBar = healthBar }
 
     -- Marker: filled from the bar's left edge to the remaining DoT damage, on the mob's (secret) health scale.
-    w.marker = invisibleBar(plate)
+    w.marker = invisibleBar(host)
     w.marker:SetAllPoints(healthBar)
     w.span = w.marker:GetStatusBarTexture()
     w.fill = w.marker:CreateTexture(nil, "ARTWORK")
@@ -120,12 +144,25 @@ local function createWidgets(plate, healthBar)
 
     -- Kill icon: a clipped window; the icon rides the end of a very long bar with max = current health and
     -- value = remaining damage, so it only slides into the window when damage >= health.
-    w.iconWindow = CreateFrame("Frame", nil, plate)
+    w.iconWindow = CreateFrame("Frame", nil, host)
     w.iconWindow:SetClipsChildren(true)
     w.iconBar = invisibleBar(w.iconWindow)
     w.iconBar:SetPoint("RIGHT", w.iconWindow, "RIGHT")
     w.icon = w.iconBar:CreateTexture(nil, "OVERLAY")
     w.icon:SetPoint("RIGHT", w.iconBar:GetStatusBarTexture(), "RIGHT")
+
+    -- EllesmereUI flattens its plate's children into one render layer; frames that set a strata are drawn
+    -- apart from it, ordered by level. Its own icons and text do that, and so do ours, in the bar's strata.
+    -- (Set before the levels: a strata change resets them.)
+    if addonPlate then
+        local ok, strata = pcall(healthBar.GetFrameStrata, healthBar)
+        if ok and not isSecret(strata) and type(strata) == "string" then
+            w.marker:SetFrameStrata(strata)
+            w.iconWindow:SetFrameStrata(strata)
+        end
+        -- The plate is pooled: a recycled one must not show the last mob's marker before our next update.
+        host:HookScript("OnHide", function() hideWidgets(w) end)
+    end
 
     -- Above the plate's health bar. Its level can be secret in Forever; then use a fixed high level.
     local ok, level = pcall(healthBar.GetFrameLevel, healthBar)
@@ -135,7 +172,7 @@ local function createWidgets(plate, healthBar)
     w.iconWindow:SetFrameLevel(level + 20)
     w.iconBar:SetFrameLevel(level + 21)
 
-    widgetsByPlate[plate] = w
+    widgetsByHost[host] = w
     return w
 end
 
@@ -208,11 +245,6 @@ local function applyStyle(w, db)
     end
 end
 
-local function hideWidgets(w)
-    w.marker:Hide()
-    w.iconWindow:Hide()
-end
-
 -- Draws one plate's widgets. maxHealth and health may be secret (real plates) or plain (the options preview):
 -- they only ever go into StatusBar min/max, never into Lua math. Returns false if drawing failed.
 local function drawPlate(w, entries, total, maxHealth, health, db)
@@ -248,22 +280,32 @@ local function drawPlate(w, entries, total, maxHealth, health, db)
     return true
 end
 
-local function widgetsFor(plate, healthBar)
-    local w = widgetsByPlate[plate]
-    if not w or w.healthBar ~= healthBar then w = createWidgets(plate, healthBar) end
+local function widgetsFor(host, healthBar, addonPlate)
+    local w = widgetsByHost[host]
+    if not w or w.healthBar ~= healthBar then
+        -- Blizzard swaps the bar under a plate: the old widgets stay anchored to it until hidden.
+        if w then hideWidgets(w) end
+        w = createWidgets(host, healthBar, addonPlate)
+    end
     return w
+end
+
+-- Hosts drawn this update; refreshPlates hides the widgets of every other one.
+local seenHosts = {}
+
+-- A dead mob keeps its plate for a moment, and its DoTs stay tracked until they expire.
+local function unitIsDead(unit)
+    local ok, dead = pcall(UnitIsDead, unit)
+    return ok and not isSecret(dead) and dead
 end
 
 local function updatePlate(unit, plate, db)
     local entries, total = ns.dotBreakdownForUnit(unit)
-    if total <= 0 then
-        local w = widgetsByPlate[plate]
-        if w then hideWidgets(w) end
-        return
-    end
-    local healthBar = findHealthBar(plate)
-    if not healthBar then return end
-    drawPlate(widgetsFor(plate, healthBar), entries, total, UnitHealthMax(unit), UnitHealth(unit), db)
+    if total <= 0 or unitIsDead(unit) then return end
+    local healthBar, host = findHealthBar(plate, unit)
+    if not healthBar or not barShown(healthBar) then return end
+    seenHosts[host] = true
+    drawPlate(widgetsFor(host, healthBar, host ~= plate), entries, total, UnitHealthMax(unit), UnitHealth(unit), db)
 end
 
 -- The options window's mock nameplate: { plate, healthBar } plus its preview state ({ health, dots } in % of
@@ -274,7 +316,7 @@ function ns.setPlatePreview(host, state)
     local old = previewPlate
     previewPlate, previewState = host, state
     if old and not host then
-        local w = widgetsByPlate[old.plate]
+        local w = widgetsByHost[old.plate]
         if w then hideWidgets(w) end
     end
 end
@@ -292,12 +334,11 @@ local function updatePreviewPlate(db)
     drawPlate(w, entries, total, 100, math.max(previewState.health, 0.01), db)
 end
 
-local seenPlates = {}
 local function refreshPlates()
     local db = ns.db
-    wipe(seenPlates)
+    wipe(seenHosts)
     if db and previewPlate and previewState then
-        seenPlates[previewPlate.plate] = true
+        seenHosts[previewPlate.plate] = true
         updatePreviewPlate(db)
     end
     if db and db.nameplateMode ~= "off" and C_NamePlate and C_NamePlate.GetNamePlateForUnit then
@@ -307,14 +348,13 @@ local function refreshPlates()
                 local ok, plate = pcall(C_NamePlate.GetNamePlateForUnit, unit)
                 local forbidden = ok and plate and plate.IsForbidden and plate:IsForbidden()
                 if ok and plate and not forbidden then
-                    seenPlates[plate] = true
                     updatePlate(unit, plate, db)
                 end
             end
         end
     end
-    for plate, w in pairs(widgetsByPlate) do
-        if not seenPlates[plate] then hideWidgets(w) end
+    for host, w in pairs(widgetsByHost) do
+        if not seenHosts[host] then hideWidgets(w) end
     end
 end
 
@@ -382,10 +422,12 @@ local function probePlate(unit, index)
     table.insert(parts, "forbidden=" .. tostring(forbidden))
     if forbidden then return table.concat(parts, " "), false end
 
-    local healthBar, path = findHealthBar(plate)
+    local healthBar, _, path = findHealthBar(plate, unit)
     table.insert(parts, "healthBar=" .. path)
     if healthBar then
         table.insert(parts, "barForbidden=" .. tostring(healthBar.IsForbidden and healthBar:IsForbidden() or false))
+        table.insert(parts, "barShown=" .. tostring(barShown(healthBar)))
+        table.insert(parts, "barStrata=" .. call(healthBar.GetFrameStrata, healthBar))
     end
 
     local bar = testBar(index)

@@ -524,5 +524,61 @@ check("  falls back to the rectangle and picks the bar", G.DoesItDieDB.customHea
 check("  no pick error logged", any("ERROR in frame pick" in l for l in G.DoesItDieDB.log.values()), False)
 lua.execute("issecretvalue = nil")
 
+# EllesmereUI's nameplates: it parks Blizzard's health bar on a hidden frame and shows its own plate frame (pooled,
+# parented to the Blizzard plate while in use, listed by unit in EllesmereNameplates_NS.plates, bar at .health).
+lua.execute("""
+    local parking = CreateFrame("Frame")
+    parking:Hide()
+    FakePlate.UnitFrame.healthBar.parent = parking
+    local eui = CreateFrame("Frame", nil, FakePlate)
+    eui.health = CreateFrame("StatusBar", nil, eui)
+    eui.health:SetFrameStrata("MEDIUM")
+    eui.nameplate, eui.unit = FakePlate, "nameplate1"
+    FakeEllesmerePlate = eui
+    EllesmereNameplates_NS = { plates = { nameplate1 = eui } }
+""")
+eui = G.FakeEllesmerePlate
+
+
+def plates_on_with_ellesmere():
+    G.DoesItDieDB.nameplateMode = "markerIcon"
+    H.fire("UNIT_SPELLCAST_SUCCEEDED", "player", "cast-2", 172)
+    H.update(0.2)
+
+
+step("EllesmereUI's plate on nameplate1, Corruption recast", plates_on_with_ellesmere)
+eui_markers = [c for c in eui.children.values() if c.kind == "StatusBar" and same(c.allPoints, eui.health)]
+check("  marker laid over EllesmereUI's health bar", len(eui_markers), 1)
+check("  filled to Corruption's 40", eui_markers[0].value if eui_markers else None, 40)
+check("  shown", eui_markers[0].shown if eui_markers else None, True)
+check("  in the bar's strata", eui_markers[0].strata if eui_markers else None, "MEDIUM")
+check("  nothing drawn on Blizzard's parked bar", markers[0].shown if markers else None, False)
+
+step("EllesmereUI releases its plate to the pool", lambda: eui.Hide(eui))
+check("  marker hidden at once", eui_markers[0].shown if eui_markers else None, False)
+step("  the plate comes back for another mob", lambda: eui.Show(eui))
+check("  no stale marker before the next update", eui_markers[0].shown if eui_markers else None, False)
+step("  next update", lambda: H.update(0.2))
+check("  marker back for this mob's DoTs", eui_markers[0].shown if eui_markers else None, True)
+
+lua.execute("function UnitIsDead(unit) return unit == 'nameplate1' end")
+step("the mob dies with Corruption still on it (its plate lingers)", lambda: H.update(0.2))
+check("  no marker on the corpse", eui_markers[0].shown if eui_markers else None, False)
+lua.execute("function UnitIsDead() return false end")
+step("  (alive again for the next checks)", lambda: H.update(0.2))
+
+step("/did plates with EllesmereUI's plate", lambda: G.SlashCmdList.DOESITDIE("plates"))
+plate_lines = [line for line in G.DoesItDieDB.log.values() if "PLATES" in line]
+check("  probe reports its health bar", any("healthBar=EllesmereUI plate.health" in line and "barShown=true" in line
+                                            and "barStrata=MEDIUM" in line for line in plate_lines), True)
+
+lua.execute("""
+    EllesmereNameplates_NS = nil
+    FakePlate.UnitFrame.healthBar.parent = FakePlate.UnitFrame
+""")
+step("without EllesmereUI's plates", lambda: H.update(0.2))
+check("  marker back on Blizzard's bar", markers[0].shown if markers else None, True)
+check("  EllesmereUI plate's marker hidden", eui_markers[0].shown if eui_markers else None, False)
+
 print(f"\n{'all passed' if not failures else str(failures) + ' FAILED'}")
 sys.exit(1 if failures else 0)
