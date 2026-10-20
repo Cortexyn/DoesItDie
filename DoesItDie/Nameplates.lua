@@ -482,6 +482,8 @@ end)
 local function probePlate(unit, index)
     local parts = { unit }
     table.insert(parts, "guid=" .. call(UnitGUID, unit))
+    -- What DoTs on it are tracked under: its GUID, "plate:nameplateN" (secret GUID, e.g. instances) or nil.
+    table.insert(parts, "key=" .. tostring(ns.tracking and ns.tracking.unitKey(unit)))
     table.insert(parts, "attackable=" .. call(UnitCanAttack, "player", unit))
     table.insert(parts, "health=" .. call(UnitHealth, unit))
     table.insert(parts, "max=" .. call(UnitHealthMax, unit))

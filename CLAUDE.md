@@ -95,7 +95,12 @@ Consequences for the design:
    finishers). A DoT that never ticks is dropped after two missed ticks, but only ticks that could have been
    seen count: `UNIT_COMBAT` only covers the target, focus and visible nameplates, so a mob you tabbed away from
    keeps its DoTs until they expire.
-5. **Display** (every 0.1s): the remaining damage of all DoTs on the target goes to the marker and the skull.
+5. **Mob keys:** DoTs are kept per mob by GUID. In instances creature GUIDs are reportedly secret (PR #8), so a
+   mob with a nameplate is keyed `plate:nameplateN` instead (`plateTokenFor`: the token stays the mob's while its
+   plate is up; `NAME_PLATE_UNIT_ADDED/REMOVED` drop that key's DoTs before the token goes to another mob). With
+   no plate either, only the current target is tracked (key `target`, dropped on target change). Needs enemy
+   nameplates on; unverified in-game. `/did plates` logs each plate's `key=`.
+6. **Display** (every 0.1s): the remaining damage of all DoTs on the target goes to the marker and the skull.
 
 Tuning constants (tick windows, tolerances, fallbacks) are at the top of `DoesItDie.lua` with the reasoning.
 
@@ -122,7 +127,7 @@ Tuning constants (tick windows, tolerances, fallbacks) are at the top of `DoesIt
     `"Interface\\Buttons\\WHITE8X8"`. Edit Lua with file tools, and grep `Interface` after scripted edits.
   - Guard every value that might be secret with `isSecret()` before comparing or indexing with it.
   - Bump `DB_VERSION` when learned tick data from older versions would be wrong.
-  - Lua allows 200 locals per function scope, including a file's top level. `DoesItDie.lua` uses 99 and
+  - Lua allows 200 locals per function scope, including a file's top level. `DoesItDie.lua` uses 100 and
     `Display.lua` 104; features with many top-level locals still belong in a new file (added to the .toc) sharing
     `ns`, and setup-only locals go in `do ... end` blocks (as in `Display.lua`). `test_load.py` runs Lua 5.1
     (`lupa.lua51`), so going over fails it.

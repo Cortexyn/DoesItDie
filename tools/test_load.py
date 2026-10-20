@@ -848,6 +848,50 @@ check("  Advanced tab has the focus rows", all(H.rowWidget(label, kind) is not N
       (("Show on focus frame", "Button"), ("Focus health bar", "EditBox"))), True)
 
 
+# Instances (PR #8): creature GUIDs are secret; the target's nameplate token stands in for its GUID.
+lua.execute("""
+    savedUnitGUID, savedGetPlate = UnitGUID, C_NamePlate.GetNamePlateForUnit
+    function issecretvalue(v) return v == SECRET end
+    FakePlate.namePlateUnitToken = "nameplate1"
+    plateUp = true
+    function UnitGUID(unit) if unit == "target" or unit == "nameplate1" then return SECRET end end
+    C_NamePlate.GetNamePlateForUnit = function(unit)
+        if plateUp and (unit == "nameplate1" or unit == "target") then return FakePlate end
+    end
+    targetGuid = SECRET
+""")
+
+
+def dungeon_cast(guid):
+    def run():
+        H.fire("PLAYER_TARGET_CHANGED")
+        H.fire("UNIT_SPELLCAST_SENT", "player", "", guid, 172)
+        H.fire("UNIT_SPELLCAST_SUCCEEDED", "player", guid, 172)
+        H.update(0.2)
+    return run
+
+
+def dot_total(unit):
+    return ns.dotBreakdownForUnit(unit)[1]
+
+
+step("in a dungeon: Corruption on the target (secret GUID, nameplate up)", dungeon_cast("cast-d1"))
+check("  tracked on the target", dot_total("target"), 40)
+check("  and on its nameplate: the same mob", dot_total("nameplate1"), 40)
+check("  logged why", any("tracking each mob by its nameplate" in l for l in G.DoesItDieDB.log.values()), True)
+step("its nameplate goes away", lambda: (H.fire("NAME_PLATE_UNIT_REMOVED", "nameplate1"), H.update(0.2)))
+check("  its DoTs are dropped (the token will be another mob's)", dot_total("nameplate1"), 0)
+check("  logged", any("PLATE nameplate1 removed" in l for l in G.DoesItDieDB.log.values()), True)
+lua.execute("plateUp = false")
+step("no nameplate at all: Corruption on the target", dungeon_cast("cast-d2"))
+check("  tracked on the target only (the old fallback)", dot_total("target"), 40)
+lua.execute("""
+    UnitGUID, C_NamePlate.GetNamePlateForUnit = savedUnitGUID, savedGetPlate
+    targetGuid = nil
+    issecretvalue = nil
+""")
+
+
 def lua_quote(text):
     return '"' + text.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n") + '"'
 
