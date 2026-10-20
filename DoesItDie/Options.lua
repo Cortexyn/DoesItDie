@@ -605,7 +605,7 @@ local function buildTabs()
     plates:choice("nameplateMode", "Show on nameplates", lists.nameplateModes, { tooltip = "Draws a marker "
         .. "(and optionally the kill icon) on every enemy nameplate with your DoTs on it, in its own look below." })
     plates:choice("plateIcon", "Kill icon", lists.icons, { enabledIf = plateIcon })
-    plates:slider("nameplateIconSize", "Kill icon size", 12, 64, 1, { enabledIf = plateIcon })
+    plates:slider("nameplateIconSize", "Kill icon size", 12, 128, 1, { enabledIf = plateIcon })
     plates:choice("nameplateIconPosition", "Kill icon position", lists.nameplateIconPositions,
         { enabledIf = plateIcon })
     plates:slider("plateIconOffsetX", "Icon horizontal offset", -40, 40, 1,
