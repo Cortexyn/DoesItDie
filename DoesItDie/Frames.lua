@@ -1,5 +1,6 @@
 -- DoesItDie custom frames: lets the marker and kill icon attach to another addon's target frame (unit frame
--- replacements) instead of Blizzard's, which those addons hide. Advanced options, off by default.
+-- replacements) instead of Blizzard's, which those addons hide. Advanced options, off by default; known
+-- replacements (EllesmereUI's) are used without a setting.
 --
 -- A setting holds a frame path: a global frame name, optionally followed by keys, e.g. "MyTargetFrame.Health".
 -- The options' "Pick" button fills one in from the frame under the mouse. The marker only needs the health
@@ -85,6 +86,20 @@ function ns.frameRoot(region)
         current = parent
     end
     return current
+end
+
+-- Replacement target frames used without a setting. Each path only resolves while its addon draws its own
+-- target frame (EllesmereUI creates its frame only when its target frame is enabled).
+local KNOWN_TARGET_BARS = {
+    { path = "EllesmereUIUnitFrames_Target.Health", label = "EllesmereUI's target frame" },
+}
+
+-- The health bar of a known replacement target frame and its label, or nil if none is there.
+function ns.knownTargetHealthBar()
+    for _, known in ipairs(KNOWN_TARGET_BARS) do
+        local bar = ns.resolveFramePath(known.path)
+        if bar then return bar, known.label end
+    end
 end
 
 ---------------------------------------------------------------------------

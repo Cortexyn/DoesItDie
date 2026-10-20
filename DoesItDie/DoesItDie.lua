@@ -116,7 +116,7 @@ local DEFAULTS = {
     -- Misc
     debug = false,
     -- Custom frames (Frames.lua): another addon's target health bar / kill icon spot, as frame paths. Empty =
-    -- Blizzard's target frame.
+    -- a known replacement target frame (EllesmereUI's) if there is one, else Blizzard's.
     customHealthBar = "",
     customIconAnchor = "",
     -- Accuracy
@@ -1454,11 +1454,13 @@ local attachedSignature
 -- Without `force`, only re-attaches if the frames to use changed (custom frames may be created late, or
 -- rebuilt by their addon), so it's cheap to call on every target change.
 local function attach(force)
-    local portrait, bar, customBar, customAnchor
+    local portrait, bar, customBar, customAnchor, typedBar, knownLabel
     if previewHost then
         portrait, bar = previewHost.portrait, previewHost.healthBar
     else
-        customBar = ns.resolveFramePath(db.customHealthBar)
+        typedBar = ns.resolveFramePath(db.customHealthBar)
+        -- Without a working path, a known replacement target frame (EllesmereUI's) comes before Blizzard's.
+        if typedBar then customBar = typedBar else customBar, knownLabel = ns.knownTargetHealthBar() end
         customAnchor = ns.resolveFramePath(db.customIconAnchor)
         bar = customBar or findTargetHealthBar()
         -- Replacement frames often have no portrait; the kill icon then sits on their health bar (offsets move it).
@@ -1481,25 +1483,27 @@ local function attach(force)
         remainingBar:SetAllPoints(healthBar)
     end
     appliedSignature = nil -- re-anchor the skull, label and effects against the (new) frames
-    local function describeSetting(path, found)
-        if path == "" then return "" end
-        return found and (" (custom " .. path .. ")") or (" (custom " .. path .. " NOT FOUND, using Blizzard's)")
+    local function describeSetting(path, found, fallback)
+        if path == "" then return fallback and (" (" .. fallback .. ")") or "" end
+        return found and (" (custom " .. path .. ")")
+            or (" (custom " .. path .. " NOT FOUND, using " .. (fallback or "Blizzard's") .. ")")
     end
     trace("ATTACH portrait: " .. regionName(portrait) .. describeSetting(db.customIconAnchor, customAnchor)
-        .. " | health bar: " .. regionName(healthBar) .. describeSetting(db.customHealthBar, customBar))
+        .. " | health bar: " .. regionName(healthBar) .. describeSetting(db.customHealthBar, typedBar, knownLabel))
     return portrait ~= nil or customBar ~= nil
 end
 
 -- What the display is attached to, for the options window: health bar and icon lines.
 function ns.attachStatus()
-    local function line(path, found, blizzard)
-        if strtrim(path) == "" then return blizzard end
+    local function line(path, found, fallback)
+        if strtrim(path) == "" then return fallback end
         if found then return "|cff66ff66" .. strtrim(path) .. "|r" end
-        return "|cffff6666" .. strtrim(path) .. " not found|r, using " .. blizzard
+        return "|cffff6666" .. strtrim(path) .. " not found|r, using " .. fallback
     end
     local customBar = ns.resolveFramePath(db.customHealthBar)
-    local iconFallback = customBar and "the health bar" or "Blizzard's portrait"
-    return line(db.customHealthBar, customBar, "Blizzard's target frame"),
+    local knownBar, knownLabel = ns.knownTargetHealthBar()
+    local iconFallback = (customBar or knownBar) and "the health bar" or "Blizzard's portrait"
+    return line(db.customHealthBar, customBar, knownLabel or "Blizzard's target frame"),
         line(db.customIconAnchor, ns.resolveFramePath(db.customIconAnchor), iconFallback)
 end
 

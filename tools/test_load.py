@@ -580,5 +580,34 @@ step("without EllesmereUI's plates", lambda: H.update(0.2))
 check("  marker back on Blizzard's bar", markers[0].shown if markers else None, True)
 check("  EllesmereUI plate's marker hidden", eui_markers[0].shown if eui_markers else None, False)
 
+# EllesmereUI's unit frames: its target frame is used without a setting. The frame only exists while EllesmereUI
+# draws the target frame itself.
+lua.execute("""
+    local frame = CreateFrame("Frame", "EllesmereUIUnitFrames_Target", UIParent)
+    frame.Health = CreateFrame("StatusBar", nil, frame)
+""")
+eui_target_bar = G.EllesmereUIUnitFrames_Target.Health
+
+
+def type_and_update(text):
+    def run():
+        type_frame_path("Target health bar", text)()
+        H.update(0.2)
+    return run
+
+
+step("EllesmereUI's target frame appears", lambda: (H.fire("PLAYER_TARGET_CHANGED"), H.update(0.2)))
+check("  a typed path still wins", same(G.DoesItDieRemaining.allPoints, custom_bar), True)
+step("clear the path", type_and_update(""))
+check("  marker laid over EllesmereUI's health bar", same(G.DoesItDieRemaining.allPoints, eui_target_bar), True)
+check("  status names it", ns.attachStatus()[0], "EllesmereUI's target frame")
+check("  kill icon on its health bar", ns.attachStatus()[1], "the health bar")
+step("type a path that doesn't exist", type_and_update("Gone.Health"))
+check("  falls back to EllesmereUI's, not Blizzard's", same(G.DoesItDieRemaining.allPoints, eui_target_bar), True)
+check("  status says so", "using EllesmereUI's target frame" in ns.attachStatus()[0], True)
+lua.execute("EllesmereUIUnitFrames_Target = nil")
+step("clear it, with EllesmereUI's target frame off", type_and_update(""))
+check("  back to Blizzard's", ns.attachStatus()[0], "Blizzard's target frame")
+
 print(f"\n{'all passed' if not failures else str(failures) + ' FAILED'}")
 sys.exit(1 if failures else 0)

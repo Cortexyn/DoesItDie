@@ -648,9 +648,11 @@ local function buildTabs()
     advanced:gap()
     advanced:frame("customHealthBar", "Target health bar", "bar", { tooltip = "For unit frame addons that replace "
         .. "Blizzard's target frame. Target something, click Pick, then click its health bar. Or type the frame's "
-        .. "name (/fstack shows it). The bar must fill left to right. Leave empty for Blizzard's." })
+        .. "name (/fstack shows it). The bar must fill left to right. Leave empty for Blizzard's, or "
+        .. "EllesmereUI's when it shows its own target frame." })
     advanced:frame("customIconAnchor", "Kill icon spot", "anchor", { tooltip = "Where the kill icon is centered "
-        .. "(e.g. the custom frame's portrait). Empty: Blizzard's portrait, or the custom health bar if one is set. "
+        .. "(e.g. the custom frame's portrait). Empty: Blizzard's portrait, or the health bar in use if it isn't "
+        .. "Blizzard's. "
         .. "Fine-tune with the offsets on the Kill icon tab." })
     advanced:info("Health bar in use", function() return (ns.attachStatus()) end)
     advanced:info("Kill icon in use", function() return select(2, ns.attachStatus()) end)
