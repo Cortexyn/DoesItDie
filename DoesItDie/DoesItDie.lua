@@ -341,8 +341,12 @@ local AVOIDED_ACTIONS = {
 -- Spells can't be dodged or parried: next to a spell DoT, these were someone's melee (usually the pet's).
 local MELEE_ONLY_AVOIDS = { DODGE = true, PARRY = true, DEFLECT = true }
 local lastBuilder    -- { key, points, at }: builder whose outcome isn't known yet
-local lastDotCast    -- { key, name, dot, previous, at }: DoT cast whose outcome isn't known yet
-local lastOutcome    -- { key, avoided, action, school, at }: most recent outcome on a mob
+-- A DoT with a direct part (Rake, Immolate) gets two results: the direct part can hit while the DoT itself is
+-- IMMUNE (a bleed on a mob immune to bleeds). So a cast whose direct part hit stays pending (landedAt) for the
+-- rest of its window, and only an IMMUNE can still remove its DoT.
+local lastDotCast    -- { key, name, dot, previous, at, landedAt }: DoT cast whose outcome isn't known yet
+local lastOutcome    -- { key, avoided, action, school, at, immune }: most recent outcome on a mob; a hit keeps
+                     -- an IMMUNE just before it in .immune
 -- The mob each cast was aimed at, by cast GUID, taken when the cast is sent. An instant DoT's
 -- UNIT_SPELLCAST_SUCCEEDED comes a server round trip later, and a player who tabs to the next mob straight
 -- away has changed target by then: the DoT used to be put on the new target.
@@ -402,12 +406,15 @@ local function castTargetKey(castGUID)
     return sent.key
 end
 
--- An avoid on `key` that arrived just before the cast event (see OUTCOME_LOOKBACK), or nil.
-local function avoidJustBefore(key)
-    if lastOutcome and lastOutcome.avoided and lastOutcome.key == key
-        and GetTime() - lastOutcome.at <= OUTCOME_LOOKBACK then
-        return lastOutcome
-    end
+-- An avoid on `key` that arrived just before the cast event (see OUTCOME_LOOKBACK), or nil. With
+-- includeImmune, also an IMMUNE followed by a hit (a DoT's direct part landed, the DoT didn't); builders leave
+-- it out, since their direct part landing awarded the points.
+local function avoidJustBefore(key, includeImmune)
+    if not lastOutcome or lastOutcome.key ~= key then return nil end
+    local now = GetTime()
+    if lastOutcome.avoided and now - lastOutcome.at <= OUTCOME_LOOKBACK then return lastOutcome end
+    local immune = includeImmune and lastOutcome.immune
+    if immune and now - immune.at <= OUTCOME_LOOKBACK then return immune end
 end
 
 -- A builder was cast: count its points unless it was already avoided, else wait for its outcome.
@@ -468,20 +475,34 @@ local function onAvoided(key, action, school)
         lastBuilder = nil
     end
     if lastDotCast and lastDotCast.key == key then
-        if now - lastDotCast.at > OUTCOME_WINDOW or removeAvoidedDot(lastDotCast, action, school) then
+        if now - lastDotCast.at > OUTCOME_WINDOW then
+            lastDotCast = nil
+        elseif lastDotCast.landedAt then
+            -- Its direct part hit: other avoids are someone else's, but the DoT itself may be immune.
+            if action == "IMMUNE" then
+                trace("IMMUNE after " .. lastDotCast.name .. "'s direct hit: the DoT didn't land")
+                if removeAvoidedDot(lastDotCast, action, school) then lastDotCast = nil end
+            end
+        elseif removeAvoidedDot(lastDotCast, action, school) then
             lastDotCast = nil
         end
     end
 end
 
--- A hit on a mob: the pending casts on it landed (a later avoid belongs to something else). For a spell DoT
--- only a hit in its school says so (Immolate's direct damage); a melee hit is someone else's.
+-- A hit on a mob: the pending casts on it landed (a later avoid belongs to something else, except an IMMUNE for
+-- a DoT's own part). For a spell DoT only a hit in its school says so (Immolate's direct damage); a melee hit is
+-- someone else's.
 local function onHit(key, school)
-    lastOutcome = { key = key, avoided = false, at = GetTime() }
+    local now = GetTime()
+    local prior = lastOutcome
+    lastOutcome = { key = key, avoided = false, at = now }
+    if prior and prior.key == key and prior.action == "IMMUNE" and now - prior.at <= OUTCOME_LOOKBACK then
+        lastOutcome.immune = prior
+    end
     if lastBuilder and lastBuilder.key == key then lastBuilder = nil end
-    if lastDotCast and lastDotCast.key == key
+    if lastDotCast and lastDotCast.key == key and not lastDotCast.landedAt
         and (lastDotCast.dot.school == SCHOOL_MASKS.Physical or lastDotCast.dot.school == school) then
-        lastDotCast = nil
+        lastDotCast.landedAt = now
     end
 end
 
@@ -571,7 +592,7 @@ local function onPlayerCast(spellID, castGUID)
         total, duration, dot.school, dot.interval, learned and ("learned " .. learned) or "from description",
         isWaiting(dot) and ", waiting for first tick" or "",
         key ~= unitKey("target") and (" on " .. tostring(key) .. ", the target when sent") or ""))
-    local avoided = avoidJustBefore(key)
+    local avoided = avoidJustBefore(key, true)
     if avoided and removeAvoidedDot(lastDotCast, avoided.action, avoided.school) then
         lastDotCast = nil
         if dotsByTarget[key] and dotsByTarget[key][name] == dot then return key, isWaiting(dot) end

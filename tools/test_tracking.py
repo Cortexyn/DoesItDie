@@ -143,6 +143,34 @@ check("  combo point taken back", sim.counted(), 0)
 sim.reset(); sim.learn(1, 10); sim.avoid("MISS", 32); sim.advance(0.1); sim.cast(1)
 check("Miss arrives just BEFORE the cast event: dropped", sim.marker(), "0 dmg from 0 DoT(s)")
 
+# Player feedback (CurseForge): a bleed on a mob immune to bleeds still showed its full size. Rake's direct part
+# hits and only the bleed is IMMUNE; the hit used to settle the cast, so the IMMUNE after it was ignored.
+sim.reset(); sim.learn(2, 13); sim.cast(2); sim.advance(0.05); sim.hit(19, 1); sim.advance(0.05); sim.avoid("IMMUNE")
+check("Rake hit, then its bleed IMMUNE: dropped", sim.marker(), "0 dmg from 0 DoT(s)")
+check("  log says why", "IMMUNE after Rake's direct hit" in sim.log(), True)
+check("  combo point still counted (the direct part landed)", sim.counted(), 1)
+sim.advance(1.0); sim.hit(13, 1); sim.advance(3.0); sim.hit(13, 1)
+check("  white hits at tick times don't bring it back", sim.marker(), "0 dmg from 0 DoT(s)")
+
+sim.reset(); sim.learn(2, 13); sim.avoid("IMMUNE"); sim.advance(0.02); sim.hit(19, 1); sim.advance(0.05); sim.cast(2)
+check("Same, both results just BEFORE the cast event: dropped", sim.marker(), "0 dmg from 0 DoT(s)")
+check("  combo point still counted", sim.counted(), 1)
+
+sim.reset(); sim.learn(2, 13); sim.cast(2); sim.advance(0.05); sim.hit(19, 1); sim.advance(1.0); sim.avoid("IMMUNE")
+check("Rake hit, an IMMUNE a second later (something else): still shown", sim.marker(), "39 dmg from 1 DoT(s)")
+
+sim.reset(); sim.learn(2, 13); sim.cast(2); sim.advance(0.05); sim.hit(19, 1); sim.advance(0.05)
+sim.avoid("DODGE"); sim.advance(0.05); sim.avoid("IMMUNE")
+check("Rake hit, an auto-attack dodged, then the bleed IMMUNE: dropped", sim.marker(), "0 dmg from 0 DoT(s)")
+
+sim.reset(); sim.learn(8, 4); sim.cast(8); sim.advance(0.05); sim.hit(11, 4); sim.advance(0.05); sim.avoid("IMMUNE", 1)
+check("Immolate hit, then a Physical IMMUNE (the pet's): waits for its first tick", sim.marker(), "0 dmg from 0 DoT(s)")
+sim.advance(2.9); sim.hit(4, 4)
+check("  its first tick shows it", sim.marker(), "16 dmg from 1 DoT(s)")
+
+sim.reset(); sim.learn(8, 4); sim.cast(8); sim.advance(0.05); sim.hit(11, 4); sim.advance(0.05); sim.avoid("IMMUNE", 4)
+check("Immolate hit, then a Fire IMMUNE: dropped", sim.marker(), "0 dmg from 0 DoT(s)")
+
 # Replay of log 123506.4: first Corruption of the session (nothing learned). At its first tick a Shadow Bolt
 # (26) and the real tick (10) land in the same instant, bolt first. Previously 26 was learned as the tick size.
 sim.reset(); sim.cast(1); sim.advance(3.0); sim.hit(26, 32); sim.hit(10, 32)

@@ -81,7 +81,9 @@ Consequences for the design:
    right after the cast decides. For spell (non-Physical) DoTs, the pet's melee is the usual culprit: dodges and
    parries are ignored, and a miss/resist not reported in the spell's school makes a new DoT wait for its first
    tick instead of dropping it. (Which school `UNIT_COMBAT` reports for a spell's own miss is unverified; AVOID
-   log lines include it.)
+   log lines include it.) The exception to "first outcome decides": a DoT with a direct part (Rake) can hit and
+   still have its DoT come back IMMUNE (bleed-immune mobs), so an IMMUNE later in the window still drops it.
+   Unverified in-game that Forever reports that IMMUNE through `UNIT_COMBAT`.
 4. **Ticks:** each `UNIT_COMBAT` hit on the target is matched to at most one DoT: same school, within a tight
    timing window of the DoT's rhythm, and a plausible size (crits 1.3–2.3×). Physical bleeds and melee white hits
    look alike, hence the tight windows. Learned tick sizes are saved per spell (per combo point count for
