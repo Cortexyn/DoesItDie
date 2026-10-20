@@ -135,15 +135,15 @@ local DEFAULTS = {
     plateIconOffsetX = 0,
     plateIconOffsetY = 15,          -- clear of the level number, which draws over the icon
     plateIcon = "skull",
-    plateDotColors = "single",
-    plateFillTexture = "flat",
+    plateDotColors = "school",
+    plateFillTexture = "stripes",
     plateFillColor = "white",
-    plateFillOpacity = 45,
-    plateOutlineStyle = "solid",
-    plateDashLength = 2,
+    plateFillOpacity = 40,
+    plateOutlineStyle = "dashed",
+    plateDashLength = 4,
     plateOutlineThickness = 1,
-    plateOutlineColor = "white",
-    plateOutlineOpacity = 100,
+    plateOutlineColor = "gold",
+    plateOutlineOpacity = 75,
 }
 
 -- "Wait for first tick": whether a DoT counts toward the marker before its first tick has landed.
