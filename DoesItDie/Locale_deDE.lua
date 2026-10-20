@@ -181,8 +181,15 @@ local function parseDot(desc, comboPoints)
     end
 end
 
+-- The options window in this language: English text -> translation (see T in Locale.lua). Untranslated text
+-- stays English. Every key, ready to fill in: python tools/test_load.py --dump-strings strings.lua
+local STRINGS = {
+}
+
 ns.locale.register({
     tag = "deDE",
+    label = "Deutsch",
+    strings = STRINGS,
     parseDot = parseDot,
     isFinisher = isFinisher,
     comboPointsAwarded = comboPointsAwarded,

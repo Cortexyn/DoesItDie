@@ -133,6 +133,7 @@ local DEFAULTS = {
     -- Accuracy
     waitFirstTick = "off",
     estimateDuringCast = true,
+    uiLanguage = "auto", -- the options window's language (Locale.lua): "auto" or a language tag
     -- Nameplates (Nameplates.lua): their own look, since enemy plates are red. Defaults read well on red.
     nameplateMode = "markerIcon",
     nameplateIconSize = 18,
@@ -2152,14 +2153,16 @@ SlashCmdList.DOESITDIE = function(msg)
     elseif cmd == "ticks" then
         ns.toggleTickViewer()
     else
-        print("The kill icon on the target's portrait means your DoTs will kill it.")
-        print("/did - open the options window")
-        print("/did line - toggle health bar markers on/off")
-        print("/did skull - show the kill icon for 5 seconds to check its position")
-        print("/did plates - check what the addon can reach on visible nameplates (logged)")
-        print("/did exec [percent] - test showing when the target is below 20% (or the given percent); again to stop")
-        print("/did debug - toggle echoing the trace log (casts, ticks, estimates) to chat")
-        print("/did ticks - show learned tick sizes")
-        print("/did reset - forget learned tick sizes")
+        for _, line in ipairs({
+            "The kill icon on the target's portrait means your DoTs will kill it.",
+            "/did - open the options window",
+            "/did line - toggle health bar markers on/off",
+            "/did skull - show the kill icon for 5 seconds to check its position",
+            "/did plates - check what the addon can reach on visible nameplates (logged)",
+            "/did exec [percent] - test showing when the target is below 20% (or the given percent); again to stop",
+            "/did debug - toggle echoing the trace log (casts, ticks, estimates) to chat",
+            "/did ticks - show learned tick sizes",
+            "/did reset - forget learned tick sizes",
+        }) do print(ns.locale.T(line)) end
     end
 end

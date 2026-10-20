@@ -8,6 +8,7 @@
 -- don't depend on templates behaving the same in Forever. Settings are written straight to ns.db.
 
 local ADDON_NAME, ns = ...
+local T = ns.locale.T -- the window's text in the window language (Locale.lua)
 
 local WHITE = "Interface\\Buttons\\WHITE8X8"
 local WINDOW_WIDTH, WINDOW_HEIGHT = 760, 548 -- tall enough for the longest tab (Nameplates, 15 rows)
@@ -121,7 +122,7 @@ local function syncDisplayHost()
         if paused and simulation then
             simulation:Cancel()
             simulation = nil
-            window.simulateButton:SetText("Simulate fight")
+            window.simulateButton:SetText(T("Simulate fight"))
         end
         ns.setDisplayHost((not paused) and window.host or nil)
         ns.setPlatePreview((not paused) and window.plateHost or nil, preview)
@@ -134,11 +135,11 @@ local function updatePreview()
     window.plateHealthBar:SetValue(preview.health)
     local total = previewTotal()
     if total <= 0 then
-        window.status:SetText("No DoTs on the target")
+        window.status:SetText(T("No DoTs on the target"))
     elseif total >= preview.health then
-        window.status:SetText("|cff66ff66DoTs finish it: the kill icon shows|r")
+        window.status:SetText("|cff66ff66" .. T("DoTs finish it: the kill icon shows") .. "|r")
     else
-        window.status:SetText(string.format("Survives by %d%% of its health", math.floor(preview.health - total + 0.5)))
+        window.status:SetText(string.format(T("Survives by %d%% of its health"), math.floor(preview.health - total + 0.5)))
     end
     ns.refresh()
 end
@@ -148,7 +149,7 @@ local function stopSimulation()
         simulation:Cancel()
         simulation = nil
     end
-    if window then window.simulateButton:SetText("Simulate fight") end
+    if window then window.simulateButton:SetText(T("Simulate fight")) end
 end
 
 -- A scripted fight: a DoT lands, ticks, a second DoT lands and makes it lethal, ticks until the target dies.
@@ -178,7 +179,7 @@ local function startSimulation()
         refreshControls()
         if preview.health <= 0 or (step > 5 and previewTotal() <= 0) then stopSimulation() end
     end)
-    window.simulateButton:SetText("Stop")
+    window.simulateButton:SetText(T("Stop"))
     updatePreview()
     refreshControls()
 end
@@ -201,14 +202,16 @@ local function makeRow(parent, labelText, opts)
     row.label:SetPoint("LEFT", 6, 0)
     row.label:SetWidth(layout.label - 8)
     row.label:SetJustifyH("LEFT")
+    labelText = T(labelText)
+    local tooltip = opts.tooltip and T(opts.tooltip)
     row.label:SetText(labelText)
     row.enabledIf = opts.enabledIf
-    if opts.tooltip then
+    if tooltip then
         row:EnableMouse(true)
         row:SetScript("OnEnter", function(self)
             GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
             GameTooltip:SetText(labelText, 1, 1, 1)
-            GameTooltip:AddLine(opts.tooltip, nil, nil, nil, true)
+            GameTooltip:AddLine(tooltip, nil, nil, nil, true)
             GameTooltip:Show()
         end)
         row:SetScript("OnLeave", function() GameTooltip:Hide() end)
@@ -335,7 +338,7 @@ local function openMenu(owner, list, current, pick)
         if entry.rgb then button.swatch:SetColorTexture(entry.rgb[1], entry.rgb[2], entry.rgb[3], 1) end
         button.text:ClearAllPoints()
         button.text:SetPoint("LEFT", entry.rgb and 26 or 8, 0)
-        button.text:SetText(entry.id == current and ("|cffffd100" .. entry.label .. "|r") or entry.label)
+        button.text:SetText(entry.id == current and ("|cffffd100" .. T(entry.label) .. "|r") or T(entry.label))
         button:SetScript("OnClick", function()
             menu:Hide()
             pick(entry.id)
@@ -352,6 +355,7 @@ end
 local function choice(parent, key, labelText, list, opts)
     opts = opts or {}
     local row = makeRow(parent, labelText, opts)
+    for _, entry in ipairs(list) do T(entry.label) end -- (so --dump-strings lists every entry)
     local button = CreateFrame("Button", nil, row, "BackdropTemplate")
     button:SetSize(row.layout.control, 22)
     button:SetPoint("LEFT", row, "LEFT", row.layout.label, 0)
@@ -372,11 +376,12 @@ local function choice(parent, key, labelText, list, opts)
         openMenu(self, list, db()[key], function(id)
             db()[key] = id
             changed()
+            if opts.onChange then opts.onChange(id) end
         end)
     end)
     function row:Refresh()
         local entry = findEntry(list, db()[key])
-        text:SetText(entry and entry.label or tostring(db()[key]))
+        text:SetText(entry and T(entry.label) or tostring(db()[key]))
         swatch:SetShown(entry ~= nil and entry.rgb ~= nil)
         if entry and entry.rgb then swatch:SetColorTexture(entry.rgb[1], entry.rgb[2], entry.rgb[3], 1) end
         text:ClearAllPoints()
@@ -390,7 +395,7 @@ end
 local function pushButton(parent, text, width, onClick)
     local button = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
     button:SetSize(width, 22)
-    button:SetText(text)
+    button:SetText(T(text))
     button:SetScript("OnClick", onClick)
     return button
 end
@@ -420,12 +425,13 @@ local function frameRow(parent, key, labelText, kind, opts)
         if strtrim(self:GetText() or "") ~= db()[key] then save(self:GetText()) end
     end)
     local pick = pushButton(row, "Pick", 52, function()
-        ns.print("Click " .. (kind == "bar" and "your target's health bar" or "where the kill icon should go")
-            .. " (you may need to move this window). Right-click cancels.")
+        ns.print(kind == "bar"
+            and T("Click your target's health bar (you may need to move this window). Right-click cancels.")
+            or T("Click where the kill icon should go (you may need to move this window). Right-click cancels."))
         ns.startFramePick(kind, function(path)
             box:SetText(path)
             save(path)
-            ns.print("Picked " .. path .. ".")
+            ns.print(string.format(T("Picked %s."), path))
         end)
     end)
     pick:SetPoint("LEFT", box, "RIGHT", 6, 0)
@@ -500,22 +506,22 @@ local function showTickTooltip(row)
     if not entry then return end
     GameTooltip:SetOwner(row, "ANCHOR_RIGHT")
     local shown = GameTooltip.SetSpellByID and pcall(GameTooltip.SetSpellByID, GameTooltip, entry.spellID)
-    if not shown then GameTooltip:SetText(entry.name or ("Spell " .. entry.spellID), 1, 1, 1) end
+    if not shown then GameTooltip:SetText(entry.name or (T("Spell") .. " " .. entry.spellID), 1, 1, 1) end
     GameTooltip:AddLine(" ")
     GameTooltip:AddLine("DoesItDie", 1, 0.82, 0)
     if entry.comboPoints then
-        GameTooltip:AddDoubleLine("Combo points", entry.comboPoints, 0.8, 0.8, 0.8, 1, 1, 1)
+        GameTooltip:AddDoubleLine(T("Combo points"), entry.comboPoints, 0.8, 0.8, 0.8, 1, 1, 1)
     end
-    GameTooltip:AddDoubleLine("Learned per tick", formatTick(entry.perTick), 0.8, 0.8, 0.8, 1, 1, 1)
+    GameTooltip:AddDoubleLine(T("Learned per tick"), formatTick(entry.perTick), 0.8, 0.8, 0.8, 1, 1, 1)
     if entry.tooltipPerTick then
-        GameTooltip:AddDoubleLine("Tooltip per tick", formatTick(entry.tooltipPerTick), 0.8, 0.8, 0.8, 1, 1, 1)
-        GameTooltip:AddDoubleLine("Ticks", string.format("%d, every %gs (%gs)", entry.ticks, entry.interval,
+        GameTooltip:AddDoubleLine(T("Tooltip per tick"), formatTick(entry.tooltipPerTick), 0.8, 0.8, 0.8, 1, 1, 1)
+        GameTooltip:AddDoubleLine(T("Ticks"), string.format(T("%d, every %gs (%gs)"), entry.ticks, entry.interval,
             entry.duration), 0.8, 0.8, 0.8, 1, 1, 1)
-        GameTooltip:AddDoubleLine("Full duration", formatTick(entry.perTick * entry.ticks), 0.8, 0.8, 0.8, 1, 1, 1)
+        GameTooltip:AddDoubleLine(T("Full duration"), formatTick(entry.perTick * entry.ticks), 0.8, 0.8, 0.8, 1, 1, 1)
     end
-    GameTooltip:AddLine("Learned from this spell's ticks on your targets; used instead of the tooltip's number, "
-        .. "which leaves out spell power and attack power.", 0.6, 0.6, 0.6, true)
-    GameTooltip:AddLine("Shift-click to link it in chat.", 0.5, 0.8, 1)
+    GameTooltip:AddLine(T("Learned from this spell's ticks on your targets; used instead of the tooltip's number, "
+        .. "which leaves out spell power and attack power."), 0.6, 0.6, 0.6, true)
+    GameTooltip:AddLine(T("Shift-click to link it in chat."), 0.5, 0.8, 1)
     GameTooltip:Show()
 end
 
@@ -568,8 +574,8 @@ local function createTickRow(parent, index)
     forgetHighlight:SetColorTexture(1, 0.3, 0.3, 0.25)
     forget:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-        GameTooltip:SetText("Forget this tick size", 1, 1, 1)
-        GameTooltip:AddLine("The next cast starts from the tooltip again and learns it anew.", nil, nil, nil, true)
+        GameTooltip:SetText(T("Forget this tick size"), 1, 1, 1)
+        GameTooltip:AddLine(T("The next cast starts from the tooltip again and learns it anew."), nil, nil, nil, true)
         GameTooltip:Show()
     end)
     forget:SetScript("OnLeave", function() GameTooltip:Hide() end)
@@ -596,7 +602,7 @@ local function fillTickRow(row, entry)
     local color = entry.color or { 0.5, 0.5, 0.5 }
     row.school:SetColorTexture(color[1], color[2], color[3], 1)
     row.icon:SetTexture(spellCall("GetSpellTexture", entry.spellID) or "Interface\\Icons\\INV_Misc_QuestionMark")
-    row.name:SetText(entry.name or ("Spell " .. entry.spellID))
+    row.name:SetText(entry.name or (T("Spell") .. " " .. entry.spellID))
     row.name:SetTextColor(SPELL_LINK_COLOR[1], SPELL_LINK_COLOR[2], SPELL_LINK_COLOR[3])
     local rank = spellCall("GetSpellSubtext", entry.spellID)
     row.rank:SetText(rank and rank ~= "" and rank or ("ID " .. entry.spellID))
@@ -640,16 +646,16 @@ local function createTickViewer()
 
     local title = viewer:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
     title:SetPoint("TOPLEFT", 16, -16)
-    title:SetText("Learned tick sizes")
+    title:SetText(T("Learned tick sizes"))
     local close = CreateFrame("Button", nil, viewer, "UIPanelCloseButton")
     close:SetPoint("TOPRIGHT", -6, -10)
     local intro = viewer:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     intro:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -8)
     intro:SetWidth(width - 32)
     intro:SetJustifyH("LEFT")
-    intro:SetText("What each DoT really ticks for, learned from your casts and used instead of its tooltip. "
+    intro:SetText(T("What each DoT really ticks for, learned from your casts and used instead of its tooltip. "
         .. "Tooltips leave out spell power and attack power: Bonus is how much more yours do. "
-        .. "Hover a spell for details, shift-click to link it.")
+        .. "Hover a spell for details, shift-click to link it."))
 
     local list = CreateFrame("Frame", nil, viewer, "BackdropTemplate")
     list:SetPoint("TOPLEFT", 10, -100)
@@ -665,7 +671,7 @@ local function createTickViewer()
         header:SetPoint("BOTTOMLEFT", list, "TOPLEFT", TICKS_COLUMNS[column][1], 4)
         header:SetWidth(TICKS_COLUMNS[column][2])
         header:SetJustifyH(column == "spell" and "LEFT" or column == "combo" and "CENTER" or "RIGHT")
-        header:SetText(text)
+        header:SetText(T(text))
     end
 
     viewer.rows = {}
@@ -677,7 +683,7 @@ local function createTickViewer()
     local empty = list:CreateFontString(nil, "OVERLAY", "GameFontDisable")
     empty:SetPoint("CENTER")
     empty:SetWidth(width - 80)
-    empty:SetText("Nothing learned yet. Tick sizes are learned as your DoTs tick on your targets.")
+    empty:SetText(T("Nothing learned yet. Tick sizes are learned as your DoTs tick on your targets."))
 
     local count = viewer:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
     count:SetPoint("BOTTOMLEFT", 16, 18)
@@ -697,9 +703,11 @@ local function createTickViewer()
             if entry then fillTickRow(row, entry) else row.entry = nil; row:Hide() end
         end
         empty:SetShown(#entries == 0)
-        local scrolled = maxOffset > 0 and string.format("  (%d-%d shown; scroll for more)", self.offset + 1,
-            math.min(#entries, self.offset + TICKS_VISIBLE_ROWS)) or ""
-        count:SetText(string.format("%d learned tick size%s%s", #entries, #entries == 1 and "" or "s", scrolled))
+        local scrolled = maxOffset > 0 and ("  " .. string.format(T("(%d-%d shown; scroll for more)"),
+            self.offset + 1, math.min(#entries, self.offset + TICKS_VISIBLE_ROWS))) or ""
+        local counted = #entries == 1 and T("1 learned tick size")
+            or string.format(T("%d learned tick sizes"), #entries)
+        count:SetText(counted .. scrolled)
         forgetAll:SetEnabled(#entries > 0)
     end
     list:SetScript("OnMouseWheel", function(_, delta)
@@ -762,7 +770,7 @@ local function addTab(name)
 
     local button = CreateFrame("Button", nil, area)
     button.text = button:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    button.text:SetText(name)
+    button.text:SetText(T(name))
     -- Tight padding: seven tabs have to fit the settings area's width.
     button:SetSize(button.text:GetStringWidth() + 12, 26)
     button.text:SetPoint("CENTER")
@@ -914,6 +922,9 @@ local function buildTabs()
     plates.footer:Hide()
 
     local advanced = addTab("Advanced")
+    advanced:choice("uiLanguage", "Window language", ns.locale.windowLanguages(), { tooltip = "The language of this "
+        .. "window and the addon's messages. Auto follows your game client. Changes apply after /reload.",
+        onChange = function() ns.print(T("The window language changes after a /reload.")) end })
     advanced:choice("waitFirstTick", "Wait for first tick", lists.waitModes, { tooltip = "Whether a new DoT "
         .. "counts before its first tick lands. \"When unsure\" waits for finishers with unknown combo points "
         .. "and spells the addon hasn't seen tick yet." })
@@ -947,7 +958,7 @@ end
 local function buildPreview(pane)
     local title = pane:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     title:SetPoint("TOPLEFT", 12, -12)
-    title:SetText("Live preview")
+    title:SetText(T("Live preview"))
 
     -- Mock target frame: name, health bar, round portrait.
     local mock = CreateFrame("Frame", nil, pane, "BackdropTemplate")
@@ -976,7 +987,7 @@ local function buildPreview(pane)
 
     local name = mock:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     name:SetPoint("BOTTOMLEFT", healthBar, "TOPLEFT", 0, 4)
-    name:SetText("Mottled Boar")
+    name:SetText(T("Mottled Boar"))
 
     window.healthBar = healthBar
     window.host = { healthBar = healthBar, portrait = portrait, layerFrame = window }
@@ -986,8 +997,8 @@ local function buildPreview(pane)
     window.combatNote = pane:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     window.combatNote:SetPoint("CENTER", mock, "CENTER")
     window.combatNote:SetWidth(PREVIEW_WIDTH - 40)
-    window.combatNote:SetText("In combat: the marker and kill icon are showing on your target. "
-        .. "The preview resumes after combat.")
+    window.combatNote:SetText(T("In combat: the marker and kill icon are showing on your target. "
+        .. "The preview resumes after combat."))
     window.combatNote:Hide()
 
     -- Preview controls (plain numbers, not settings).
@@ -1024,13 +1035,13 @@ local function buildPreview(pane)
     -- Mock enemy nameplate (red, like the real ones), drawn by the real nameplate code (Nameplates.lua).
     local plateLabel = pane:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
     plateLabel:SetPoint("TOPLEFT", window.status, "BOTTOMLEFT", 0, -20)
-    plateLabel:SetText("Nameplate")
+    plateLabel:SetText(T("Nameplate"))
     local mockPlate = CreateFrame("Frame", nil, pane)
     mockPlate:SetSize(140, 26)
     mockPlate:SetPoint("TOPLEFT", plateLabel, "BOTTOMLEFT", 40, -6)
     local plateName = mockPlate:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     plateName:SetPoint("TOP", mockPlate, "TOP")
-    plateName:SetText("Mottled Boar")
+    plateName:SetText(T("Mottled Boar"))
     local plateBar = CreateFrame("StatusBar", nil, mockPlate)
     plateBar:SetSize(140, 10)
     plateBar:SetPoint("BOTTOM", mockPlate, "BOTTOM")
@@ -1048,7 +1059,7 @@ local function buildPreview(pane)
     hint:SetPoint("BOTTOMLEFT", pane, "BOTTOMLEFT", 12, 12)
     hint:SetWidth(PREVIEW_WIDTH - 24)
     hint:SetJustifyH("LEFT")
-    hint:SetText("While this window is open, the marker and kill icon are drawn here instead of on your target.")
+    hint:SetText(T("While this window is open, the marker and kill icon are drawn here instead of on your target."))
 end
 
 local function createWindow()
@@ -1088,7 +1099,7 @@ local function createWindow()
         previous = button
     end
     presetLabel:SetPoint("RIGHT", previous, "LEFT", -8, 0)
-    presetLabel:SetText("Presets")
+    presetLabel:SetText(T("Presets"))
 
     local pane = CreateFrame("Frame", nil, window, "BackdropTemplate")
     pane:SetPoint("TOPLEFT", 10, -HEADER_HEIGHT)
@@ -1152,7 +1163,7 @@ function ns.registerOptions()
     title:SetText("DoesItDie")
     local text = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
     text:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -10)
-    text:SetText("Settings have their own window with a live preview. You can also type /did.")
+    text:SetText(T("Settings have their own window with a live preview. You can also type /did."))
     local open = pushButton(panel, "Open DoesItDie options", 200, function()
         if SettingsPanel and SettingsPanel:IsShown() then pcall(HideUIPanel, SettingsPanel) end
         if not (window and window:IsShown()) then ns.openOptions() end

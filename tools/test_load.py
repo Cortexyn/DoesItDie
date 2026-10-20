@@ -247,11 +247,22 @@ files = [line.strip() for line in toc if line.strip().endswith(".lua")]
 for name in files:
     step(f"load {name}", lambda name=name: H.load(name, open(os.path.join(ADDON, name), encoding="utf-8").read(), ns))
 
+ns.locale.collectStrings = True  # every text the window asks T for (see --dump-strings)
 step("ADDON_LOADED", lambda: H.fire("ADDON_LOADED", "DoesItDie"))
 check("defaults applied", G.DoesItDieDB.skullIcon, "cross")
+# The window's own text: a test language with one translation, chosen as the window language.
+ns.locale.register(lua.eval('{ tag = "xxXX", label = "Test", strings = { ["Live preview"] = "Vorschau (test)" } }'))
+G.DoesItDieDB.uiLanguage = "xxXX"
+check("a language with translations is offered", [e.id for e in ns.locale.windowLanguages().values()],
+      ["auto", "enUS", "xxXX"])
 step("run the display loop with no target", lambda: H.update(0.2))
 step("/did opens the window", lambda: G.SlashCmdList.DOESITDIE(""))
 check("window shown", G.DoesItDieOptions.shown, True)
+check("translated text shown in the window language", lua.eval("""function(frames)
+    for _, f in ipairs(frames) do if f.text == "Vorschau (test)" then return true end end
+    return false
+end""")(lua.globals().frames), True)
+check("untranslated text stays English", ns.locale.T("Simulate fight"), "Simulate fight")
 step("display loop with the window's preview", lambda: H.update(0.2))
 
 for tab in ("Kill icon", "Marker", "Effects", "Text", "Nameplates", "Advanced"):
@@ -728,6 +739,30 @@ step("/did ticks again closes it", lambda: G.SlashCmdList.DOESITDIE("ticks"))
 check("  hidden", viewer.shown, False)
 step("Advanced tab's View button opens it", lambda: H.clickText("View"))
 check("  shown", viewer.shown, True)
+
+
+def lua_quote(text):
+    return '"' + text.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n") + '"'
+
+
+# --dump-strings FILE: every text the window and messages above asked T for (Locale.lua), as a table to paste
+# into a language file's STRINGS and fill in.
+if "--dump-strings" in sys.argv:
+    import re
+    path = sys.argv[sys.argv.index("--dump-strings") + 1]
+    seen = {k for k in ns.locale.seenStrings.keys() if isinstance(k, str)}
+    # Plus every literal T("...") in the source: text only shown in states the run above didn't reach.
+    for name in files:
+        source = open(os.path.join(ADDON, name), encoding="utf-8").read()
+        for literal in re.findall(r'\bT\("((?:[^"\\]|\\.)*)"\)', source):
+            seen.add(literal.replace('\\"', '"').replace("\\n", "\n").replace("\\\\", "\\"))
+    keys = sorted(seen)
+    with open(path, "w", encoding="utf-8", newline="\n") as out:
+        out.write("local STRINGS = {\n")
+        for key in keys:
+            out.write(f"    [{lua_quote(key)}] = \"\",\n")
+        out.write("}\n")
+    print(f"\n{len(keys)} strings written to {path}")
 
 print(f"\n{'all passed' if not failures else str(failures) + ' FAILED'}")
 sys.exit(1 if failures else 0)
