@@ -427,6 +427,16 @@ ns.barMarker = {
     widgetsFor = widgetsFor,
     draw = drawPlate,
     hide = hideWidgets,
+    -- Puts the widgets in `strata`, just above `level` (a frame's top layer, when its bar's own isn't enough).
+    layer = function(w, strata, level)
+        w.marker:SetFrameStrata(strata)
+        w.iconWindow:SetFrameStrata(strata)
+        w.iconBar:SetFrameStrata(strata)
+        w.strataSet = true
+        w.marker:SetFrameLevel(level + 5)
+        w.iconWindow:SetFrameLevel(level + 20)
+        w.iconBar:SetFrameLevel(level + 21)
+    end,
 }
 
 local driver = CreateFrame("Frame")

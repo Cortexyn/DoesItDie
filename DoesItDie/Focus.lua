@@ -102,6 +102,49 @@ local function shown(bar)
     return not ok or isSecret(visible) or visible ~= false
 end
 
+-- Highest strata/level anywhere in the focus frame: the bar's own level isn't enough, since Blizzard's focus frame
+-- (like the target frame, see Display.lua) has art layered far above its health bar, and can re-layer it any time.
+local STRATA_RANK = {
+    BACKGROUND = 1, LOW = 2, MEDIUM = 3, HIGH = 4, DIALOG = 5, FULLSCREEN = 6, FULLSCREEN_DIALOG = 7, TOOLTIP = 8,
+}
+local LAYER_CHECK_INTERVAL = 1
+local layerCheckedAt, topStrata, topLevel, layerBar = -math.huge, nil, nil, nil
+
+local function topLayer(root)
+    local bestStrata, bestLevel = "BACKGROUND", 0
+    local function visit(frame, depth)
+        -- Some of Blizzard's frames report a secret strata/level; those are skipped (their children aren't).
+        local strata, level = frame:GetFrameStrata(), frame:GetFrameLevel()
+        if not isSecret(strata) and not isSecret(level) then
+            local rank, bestRank = STRATA_RANK[strata] or 0, STRATA_RANK[bestStrata] or 0
+            if rank > bestRank then
+                bestStrata, bestLevel = strata, level
+            elseif rank == bestRank and level > bestLevel then
+                bestLevel = level
+            end
+        end
+        if depth < 6 then
+            for _, child in ipairs({ frame:GetChildren() }) do visit(child, depth + 1) end
+        end
+    end
+    visit(root, 0)
+    return bestStrata, bestLevel
+end
+
+-- Keeps the focus widgets above everything on the frame that holds `bar` (checked at most once a second).
+local function updateLayering(bar, now)
+    if bar ~= layerBar or now - layerCheckedAt >= LAYER_CHECK_INTERVAL then
+        layerCheckedAt, layerBar = now, bar
+        local root = ns.frameRoot and ns.frameRoot(bar) or bar
+        local ok, strata, level = pcall(topLayer, root)
+        if ok and (strata ~= topStrata or level ~= topLevel) then
+            topStrata, topLevel = strata, level
+            ns.trace(string.format("LAYER focus frame top is %s/%d; focus marker placed above it", strata, level))
+        end
+    end
+    if topStrata then ns.barMarker.layer(widgets, topStrata, topLevel) end
+end
+
 local function dead()
     local ok, isDead = pcall(UnitIsDead, "focus")
     return ok and not isSecret(isDead) and isDead
@@ -117,8 +160,8 @@ local function refresh()
     local entries, total = ns.dotBreakdownForUnit("focus")
     if total <= 0 then return hide() end
     ns.barMarker.pin(host)
-    -- The bar isn't the host's child: take its strata so the marker draws above it.
     widgets = ns.barMarker.widgetsFor(host, bar, false, true)
+    updateLayering(bar, GetTime())
     ns.barMarker.draw(widgets, entries, total, UnitHealthMax("focus"), UnitHealth("focus"), focusLook)
 end
 

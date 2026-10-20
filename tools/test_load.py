@@ -799,6 +799,9 @@ lua.execute("""
     main.HealthBarsContainer = CreateFrame("Frame", nil, main)
     main.HealthBarsContainer.HealthBar = CreateFrame("StatusBar", nil, main.HealthBarsContainer)
     BlizzardFocusBar = main.HealthBarsContainer.HealthBar
+    -- Like Blizzard's: art layered far above the health bar (the target frame's top was MEDIUM/1001 in game).
+    focus:SetFrameStrata("MEDIUM")
+    focus:SetFrameLevel(1001)
 """)
 
 
@@ -819,6 +822,8 @@ check("  marker on Blizzard's focus health bar", len(focus_markers), 1)
 check("  filled to Corruption's 40", focus_markers[0].value if focus_markers else None, 40)
 check("  shown", focus_markers[0].shown if focus_markers else None, True)
 check("  status names it", ns.focusStatus(), "Blizzard's focus frame")
+check("  layered above the focus frame's top (MEDIUM/1001)",
+      (focus_markers[0].strata, focus_markers[0].level) if focus_markers else None, ("MEDIUM", 1006))
 step("another update (the nameplate refresh must leave it alone)", lambda: H.update(0.2))
 check("  still shown", focus_markers[0].shown if focus_markers else None, True)
 step("  and with the updates in the other order", lambda: H.updateReversed(0.2))
