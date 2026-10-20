@@ -88,17 +88,36 @@ function ns.frameRoot(region)
     return current
 end
 
--- Replacement target frames used without a setting. Each path only resolves while its addon draws its own
--- target frame (EllesmereUI creates its frame only when its target frame is enabled).
-local KNOWN_TARGET_BARS = {
-    { path = "EllesmereUIUnitFrames_Target.Health", label = "EllesmereUI's target frame" },
+-- Replacement target frames used without a setting: the frame's global name, its health bar and portrait keys,
+-- and whose it is. Each only exists while its addon draws its own target frame (EllesmereUI creates its frame
+-- only when its target frame is enabled).
+local KNOWN_TARGET_FRAMES = {
+    { frame = "EllesmereUIUnitFrames_Target", bar = "Health", portrait = "Portrait", owner = "EllesmereUI's" },
 }
 
--- The health bar of a known replacement target frame and its label, or nil if none is there.
-function ns.knownTargetHealthBar()
-    for _, known in ipairs(KNOWN_TARGET_BARS) do
-        local bar = ns.resolveFramePath(known.path)
-        if bar then return bar, known.label end
+-- Whether `region` and its ancestors below `root` are shown. The root itself is left out: a target frame hides
+-- while there's no target.
+local function shownBelow(region, root)
+    local current = region
+    for _ = 1, 20 do
+        if current == nil or current == root then return true end
+        if plain(current, "IsShown") == false then return false end
+        current = plain(current, "GetParent")
+    end
+    return true
+end
+
+-- A known replacement target frame that's there: its health bar, its portrait if it's shown (EllesmereUI
+-- hides its portrait when portraits are off), and whose it is ("EllesmereUI's"). Nil if none is there.
+function ns.knownTargetFrame()
+    for _, known in ipairs(KNOWN_TARGET_FRAMES) do
+        local root = ns.resolveFramePath(known.frame)
+        local bar = root and ns.resolveFramePath(known.frame .. "." .. known.bar)
+        if bar then
+            local portrait = ns.resolveFramePath(known.frame .. "." .. known.portrait)
+            if portrait and not shownBelow(portrait, root) then portrait = nil end
+            return bar, portrait, known.owner
+        end
     end
 end
 

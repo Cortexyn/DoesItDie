@@ -1454,17 +1454,21 @@ local attachedSignature
 -- Without `force`, only re-attaches if the frames to use changed (custom frames may be created late, or
 -- rebuilt by their addon), so it's cheap to call on every target change.
 local function attach(force)
-    local portrait, bar, customBar, customAnchor, typedBar, knownLabel
+    local portrait, bar, customBar, customAnchor, typedBar, knownPortrait, knownOwner
     if previewHost then
         portrait, bar = previewHost.portrait, previewHost.healthBar
     else
         typedBar = ns.resolveFramePath(db.customHealthBar)
         -- Without a working path, a known replacement target frame (EllesmereUI's) comes before Blizzard's.
-        if typedBar then customBar = typedBar else customBar, knownLabel = ns.knownTargetHealthBar() end
+        if typedBar then
+            customBar = typedBar
+        else
+            customBar, knownPortrait, knownOwner = ns.knownTargetFrame()
+        end
         customAnchor = ns.resolveFramePath(db.customIconAnchor)
         bar = customBar or findTargetHealthBar()
         -- Replacement frames often have no portrait; the kill icon then sits on their health bar (offsets move it).
-        portrait = customAnchor or (customBar == nil and findTargetPortrait()) or nil
+        portrait = customAnchor or knownPortrait or (customBar == nil and findTargetPortrait()) or nil
     end
     local signature = tostring(previewHost) .. tostring(bar) .. tostring(portrait)
     if not force and signature == attachedSignature then return portrait ~= nil end
@@ -1489,7 +1493,8 @@ local function attach(force)
             or (" (custom " .. path .. " NOT FOUND, using " .. (fallback or "Blizzard's") .. ")")
     end
     trace("ATTACH portrait: " .. regionName(portrait) .. describeSetting(db.customIconAnchor, customAnchor)
-        .. " | health bar: " .. regionName(healthBar) .. describeSetting(db.customHealthBar, typedBar, knownLabel))
+        .. " | health bar: " .. regionName(healthBar)
+        .. describeSetting(db.customHealthBar, typedBar, knownOwner and (knownOwner .. " target frame")))
     return portrait ~= nil or customBar ~= nil
 end
 
@@ -1501,9 +1506,12 @@ function ns.attachStatus()
         return "|cffff6666" .. strtrim(path) .. " not found|r, using " .. fallback
     end
     local customBar = ns.resolveFramePath(db.customHealthBar)
-    local knownBar, knownLabel = ns.knownTargetHealthBar()
-    local iconFallback = (customBar or knownBar) and "the health bar" or "Blizzard's portrait"
-    return line(db.customHealthBar, customBar, knownLabel or "Blizzard's target frame"),
+    local knownBar, knownPortrait, knownOwner
+    if not customBar then knownBar, knownPortrait, knownOwner = ns.knownTargetFrame() end
+    local iconFallback = knownPortrait and (knownOwner .. " portrait")
+        or (customBar or knownBar) and "the health bar" or "Blizzard's portrait"
+    local barFallback = knownOwner and (knownOwner .. " target frame") or "Blizzard's target frame"
+    return line(db.customHealthBar, customBar, barFallback),
         line(db.customIconAnchor, ns.resolveFramePath(db.customIconAnchor), iconFallback)
 end
 

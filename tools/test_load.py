@@ -585,8 +585,17 @@ check("  EllesmereUI plate's marker hidden", eui_markers[0].shown if eui_markers
 lua.execute("""
     local frame = CreateFrame("Frame", "EllesmereUIUnitFrames_Target", UIParent)
     frame.Health = CreateFrame("StatusBar", nil, frame)
+    -- The portrait sits on a backdrop, which EllesmereUI hides when portraits are off.
+    local backdrop = CreateFrame("Frame", nil, frame)
+    frame.Portrait = backdrop:CreateTexture()
+    frame.Portrait.name = "EllesmereUIPortrait"
 """)
 eui_target_bar = G.EllesmereUIUnitFrames_Target.Health
+
+
+def last_attach():
+    return [line for line in G.DoesItDieDB.log.values() if "ATTACH" in line][-1]
+
 
 
 def type_and_update(text):
@@ -601,7 +610,19 @@ check("  a typed path still wins", same(G.DoesItDieRemaining.allPoints, custom_b
 step("clear the path", type_and_update(""))
 check("  marker laid over EllesmereUI's health bar", same(G.DoesItDieRemaining.allPoints, eui_target_bar), True)
 check("  status names it", ns.attachStatus()[0], "EllesmereUI's target frame")
+check("  kill icon on its portrait", ns.attachStatus()[1], "EllesmereUI's portrait")
+check("    and attached there", "ATTACH portrait: EllesmereUIPortrait" in last_attach(), True)
+
+
+def portraits_off():
+    lua.execute("EllesmereUIUnitFrames_Target.Portrait:GetParent():Hide()")
+    H.fire("PLAYER_TARGET_CHANGED")
+    H.update(0.2)
+
+
+step("EllesmereUI's portraits turned off", portraits_off)
 check("  kill icon on its health bar", ns.attachStatus()[1], "the health bar")
+check("    and attached there", "ATTACH portrait: not found" in last_attach(), True)
 step("type a path that doesn't exist", type_and_update("Gone.Health"))
 check("  falls back to EllesmereUI's, not Blizzard's", same(G.DoesItDieRemaining.allPoints, eui_target_bar), True)
 check("  status says so", "using EllesmereUI's target frame" in ns.attachStatus()[0], True)

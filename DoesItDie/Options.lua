@@ -651,8 +651,8 @@ local function buildTabs()
         .. "name (/fstack shows it). The bar must fill left to right. Leave empty for Blizzard's, or "
         .. "EllesmereUI's when it shows its own target frame." })
     advanced:frame("customIconAnchor", "Kill icon spot", "anchor", { tooltip = "Where the kill icon is centered "
-        .. "(e.g. the custom frame's portrait). Empty: Blizzard's portrait, or the health bar in use if it isn't "
-        .. "Blizzard's. "
+        .. "(e.g. the custom frame's portrait). Empty: Blizzard's portrait, or EllesmereUI's when its target frame "
+        .. "shows one; else the health bar in use. "
         .. "Fine-tune with the offsets on the Kill icon tab." })
     advanced:info("Health bar in use", function() return (ns.attachStatus()) end)
     advanced:info("Kill icon in use", function() return select(2, ns.attachStatus()) end)
