@@ -33,7 +33,7 @@
  "hunter/Counterattack": "not tracked",
  "hunter/Explosive Trap": "ignored (list)",
  "hunter/Freezing Trap": "not tracked",
- "hunter/Immolation Trap": "ignored (list)",
+ "hunter/Immolation Trap": "trap, starts on first tick: 690 dmg, school 4, 15s, every 3s -> 5 ticks of 138.0",
  "hunter/Lacerate": "406 dmg, school 1, 21s, every 3s -> 7 ticks of 58.0",
  "hunter/Mongoose Bite": "not tracked",
  "hunter/Raptor Strike": "not tracked",

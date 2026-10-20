@@ -58,6 +58,8 @@ local SPELLS = {
     [11] = { "Zerfetzen", "Finishing-Move, der Schaden im Lauf der Zeit verursacht. Der Schaden erhöht sich pro Combopunkt sowie durch Eure Angriffskraft:\\n   1 Punkt: 42 Schaden im Verlauf von 12 Sek.\\n   2 Punkte: 66 Schaden im Verlauf von 12 Sek.\\n   5 Punkte: 138 Schaden im Verlauf von 12 Sek." },
     [12] = { "Fluch der Pein", "Verflucht das Ziel mit Pein und fügt 24 Sek. lang 72 Punkt(e) Schattenschaden zu. Zuerst wird der Schaden langsam zugefügt und nimmt dann zu, bis der Fluch seine Gesamtdauer erreicht hat." },
     [13] = { "Feuerregen", "Lässt einen feurigen Regen niedergehen, der 8 Sek. lang Feinde im Wirkungsbereich mit 168 Punkt(en) Feuerschaden verbrennt." },
+    [14] = { "Immolation Trap", "Place a Fire trap that will burn the first enemy to approach for 690 Fire damage over 15 sec. Trap will exist for 1 min. Only one Fire trap can be active at a time." },
+    [15] = { "Explosive Trap", "Place a Fire trap that explodes when an enemy approaches, causing 201 to 257 Fire damage and 330 additional Fire damage over 20 sec to all within 10 yards. Trap will exist for 1 min. Only one Fire trap can be active at a time." },
 }
 local function spellNameAndDescription(id) return SPELLS[id][1], SPELLS[id][2] end
 """ + chunk("local UPDATE_INTERVAL", "-- User options") + chunk(
@@ -67,7 +69,7 @@ function api.reset(waitMode, estimateDuringCast)
     for k in pairs(dotsByTarget) do dotsByTarget[k] = nil end
     for k in pairs(db.ticks) do db.ticks[k] = nil end
     db.waitFirstTick = waitMode or "off"
-    lastBuilder, lastDotCast, lastOutcome = nil, nil, nil
+    lastBuilder, lastDotCast, lastOutcome, armedTrap = nil, nil, nil, nil
     for k in pairs(sentTargets) do sentTargets[k] = nil end
     db.estimateDuringCast = estimateDuringCast ~= false
     if dropCastInProgress then dropCastInProgress("reset") end
@@ -456,6 +458,39 @@ def play(with_cast_events, estimate):
 
 check("Option off: casts with START/STOP events same as without", play(True, False), play(False, False))
 check("  (and on, they differ)", play(True, True) != play(False, True), True)
+
+# Player feedback: Immolation Trap wasn't tracked. Placing it only arms it; the DoT starts on whichever mob takes
+# its first tick (138 = 690 / 5 ticks every 3s), which comes one interval after the trap springs.
+sim.reset(); sim.cast(14)
+check("Immolation Trap placed: nothing shown yet", sim.marker(), "0 dmg from 0 DoT(s)")
+sim.advance(8)
+check("  first tick on the target: shown (and flashes)", sim.hit(140, 4), "mob")
+check("  with 4 ticks left at the observed size", sim.marker(), "560 dmg from 1 DoT(s)")
+for amount in (138, 139, 140, 138):
+    sim.advance(3); sim.hit(amount, 4)
+check("  the other 4 ticks matched", sim.log().count("TICK Immolation Trap"), 4)
+check("  and it counts down to zero", sim.marker().split()[0], "0")
+sim.advance(3); sim.hit(139, 4)
+check("  a used trap doesn't spring again", sim.log().count("sprung"), 1)
+
+sim.reset(); sim.plate("nameplate1", "B"); sim.cast(14); sim.advance(10); sim.hit(138, 4, "", "nameplate1")
+check("Trap sprung on another mob (seen on its nameplate): on that mob", sim.markerOn("B"), "552 dmg")
+check("  not on the target", sim.marker(), "0 dmg from 0 DoT(s)")
+
+sim.reset(); sim.cast(14); sim.advance(1); sim.hit(138, 4)
+check("A Fire hit sooner than one tick after placing isn't the trap", sim.marker(), "0 dmg from 0 DoT(s)")
+sim.reset(); sim.cast(14); sim.advance(5); sim.hit(900, 4); sim.hit(20, 4); sim.hit(138, 1)
+check("Fire hits far off the trap's size, or other schools, aren't it", sim.marker(), "0 dmg from 0 DoT(s)")
+sim.reset(); sim.cast(14); sim.advance(62); sim.hit(138, 4)
+check("A trap sprung at the end of its minute still counts", sim.marker(), "552 dmg from 1 DoT(s)")
+sim.reset(); sim.cast(14); sim.advance(70); sim.hit(138, 4)
+check("  but not a hit after that", sim.marker(), "0 dmg from 0 DoT(s)")
+sim.reset(); sim.cast(14); sim.advance(2); sim.cast(15); sim.advance(5); sim.hit(138, 4)
+check("Explosive Trap placed after it replaces the armed trap", sim.marker(), "0 dmg from 0 DoT(s)")
+sim.reset(); sim.learn(14, 200); sim.cast(14); sim.advance(5); sim.hit(138, 4)
+check("With a learned size, a hit far off it isn't the trap", sim.marker(), "0 dmg from 0 DoT(s)")
+sim.advance(1); sim.hit(205, 4)
+check("  one close to it is", sim.marker(), "820 dmg from 1 DoT(s)")
 
 print(f"\n{'all passed' if not failures else str(failures) + ' FAILED'}")
 if failures:

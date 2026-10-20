@@ -40,7 +40,7 @@ lua_code = "\n".join([
         local interval = stated or KNOWN_TICK_INTERVALS[name] or DEFAULT_TICK_INTERVAL
         school = SCHOOL_BY_NAME[name] or school
         local ticks = math.max(1, math.floor(duration / interval + 0.5))
-        return string.format("%d dmg, school %d, %gs, every %gs -> %d ticks of %.1f",
+        return string.format((TRAP_DOTS[name] and "trap, starts on first tick: " or "") .. "%d dmg, school %d, %gs, every %gs -> %d ticks of %.1f",
             total, school, duration, interval, ticks, total / ticks)
     end
     """,
@@ -75,8 +75,8 @@ CASES = [
     ("Mage", "Flamestrike", "Calls down a pillar of fire, burning all enemies within the area for 55 to 71 Fire damage and an additional 48 Fire damage over 8 sec.", "ignored (AoE)"),
     ("Shaman", "Flame Shock", "Instantly sears the target with fire, causing 25 Fire damage immediately and 28 Fire damage over 12 sec.", "4 ticks"),
     ("Hunter", "Serpent Sting", "Stings the target, causing 20 Nature damage over 15 sec.  Only one Sting per Hunter can be active on any one target.", "5 ticks"),
-    ("Hunter", "Immolation Trap", "Place a fire trap that will burn the first enemy to approach for 105 Fire damage over 15 sec.  Trap will exist for 1 min.", "trap: ignore"),
-    ("Hunter", "Explosive Trap", "Place a fire trap that explodes when an enemy approaches, causing 100 to 130 Fire damage and burning all enemies for 110 additional Fire damage over 20 sec to all within 10 yards.", "trap: ignore"),
+    ("Hunter", "Immolation Trap", "Place a fire trap that will burn the first enemy to approach for 105 Fire damage over 15 sec.  Trap will exist for 1 min.", "trap: armed, 5 ticks"),
+    ("Hunter", "Explosive Trap", "Place a fire trap that explodes when an enemy approaches, causing 100 to 130 Fire damage and burning all enemies for 110 additional Fire damage over 20 sec to all within 10 yards.", "ignored (AoE trap)"),
     ("Hunter", "Wyvern Sting", "A stinging shot that puts the target to sleep for 12 sec.  When the target wakes up, the Sting causes 300 Nature damage over 12 sec.", "delayed: ignore"),
     # Forever (quoted from Wowhead Forever tooltips unless marked guessed)
     ("Forever", "Frostfire Bolt", "Launches a bolt of frostfire at the enemy, causing 412 Frostfire damage, slowing movement speed by 40% and causing an additional 39 Frostfire damage over 9 sec.", "school 20, 3 ticks"),

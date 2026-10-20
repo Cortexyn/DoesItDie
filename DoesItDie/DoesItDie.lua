@@ -69,12 +69,17 @@ local IGNORED_SPELLS = {
     ["Consecration"] = true, ["Hurricane"] = true, ["Volley"] = true,
     ["Drain Life"] = true, ["Drain Soul"] = true, ["Drain Mana"] = true, ["Health Funnel"] = true,
     ["Mind Flay"] = true, ["Arcane Missiles"] = true, ["Starshards"] = true,
-    ["Immolation Trap"] = true, ["Explosive Trap"] = true, ["Wyvern Sting"] = true,
+    ["Explosive Trap"] = true, ["Wyvern Sting"] = true,
 }
+
+-- Traps that put a DoT on the first enemy to walk in. Placing one only arms it (the trap, not the player, casts
+-- the DoT when it springs, so no cast event says when or on whom); the DoT starts on the mob that takes the
+-- first plausible unmatched tick of its school while it's armed. See springTrap.
+local TRAP_DOTS = { ["Immolation Trap"] = true }
 
 -- The name-keyed tables also answer to the names of every registered language, and on ADDON_LOADED to the names
 -- this client reports for them (Locale.lua).
-local NAME_TABLES = { KNOWN_TICK_INTERVALS, TICK_SHAPES, SCHOOL_BY_NAME, IGNORED_SPELLS, PROJECTILE_DOTS }
+local NAME_TABLES = { KNOWN_TICK_INTERVALS, TICK_SHAPES, SCHOOL_BY_NAME, IGNORED_SPELLS, PROJECTILE_DOTS, TRAP_DOTS }
 ns.locale.addNames(NAME_TABLES)
 
 local SCHOOL_MASKS = {
@@ -347,6 +352,7 @@ local lastBuilder    -- { key, points, at }: builder whose outcome isn't known y
 local lastDotCast    -- { key, name, dot, previous, at, landedAt }: DoT cast whose outcome isn't known yet
 local lastOutcome    -- { key, avoided, action, school, at, immune }: most recent outcome on a mob; a hit keeps
                      -- an IMMUNE just before it in .immune
+local armedTrap      -- { spellID, name, total, school, duration, interval, placedAt, expiresAt }: see TRAP_DOTS
 -- The mob each cast was aimed at, by cast GUID, taken when the cast is sent. An instant DoT's
 -- UNIT_SPELLCAST_SUCCEEDED comes a server round trip later, and a player who tabs to the next mob straight
 -- away has changed target by then: the DoT used to be put on the new target.
@@ -558,6 +564,8 @@ local function onPlayerCast(spellID, castGUID)
     if type(desc) == "string" and not isSecret(desc) then
         local awarded = tonumber(desc:match("Awards (%d+) combo point")) or ns.locale.comboPointsAwarded(desc)
         if awarded then onBuilderCast(key, awarded) end
+        -- Only one Fire trap can be active: any new one (Explosive Trap too) replaces the armed one.
+        if armedTrap and desc:find("Fire trap") then armedTrap = nil end
     end
     if IGNORED_SPELLS[name] then return end
     local isFinisher = isFinisherDescription(desc)
@@ -575,9 +583,21 @@ local function onPlayerCast(spellID, castGUID)
     local tickKey = spellID
     if isFinisher then tickKey = comboPoints and (spellID .. "x" .. comboPoints) or nil end
 
+    local now = GetTime()
+    if TRAP_DOTS[name] then
+        -- A new trap replaces the armed one ("Only one Fire trap can be active at a time").
+        local interval = statedInterval or KNOWN_TICK_INTERVALS[name] or DEFAULT_TICK_INTERVAL
+        school = SCHOOL_BY_NAME[name] or school
+        local lifetime = tonumber(desc:match("[Tt]rap will exist for (%d+) min"))
+        armedTrap = { spellID = spellID, name = name, total = total, school = school, duration = duration,
+            interval = interval, placedAt = now, expiresAt = now + (lifetime or 1) * 60 }
+        trace(string.format("TRAP %s (id %d) armed: %d dmg over %ss, school %d, per-tick %s", name, spellID, total,
+            duration, school, db.ticks[spellID] and ("learned " .. db.ticks[spellID]) or "from description"))
+        return
+    end
+
     if not key then return end
 
-    local now = GetTime()
     dotsByTarget[key] = dotsByTarget[key] or {}
     local previous = dotsByTarget[key][name]
     local dot = newDot(spellID, tickKey, name, total, school, duration, statedInterval, now)
@@ -772,6 +792,49 @@ local function tryRelearn(dot, name, amount, isCrit, index, distance, now)
     return true
 end
 
+-- Counts a hit as the DoT's tick in slot `index`. Returns the tick's number (1 = first) and shape factor.
+local function recordTick(dot, amount, isCrit, index, now)
+    local factor = tickShape(dot, tickNumberAt(dot, now))
+    dot.ticksSeen = dot.ticksSeen + 1
+    dot.lastTickAmount, dot.lastTickShape, dot.lastTickCrit = amount, factor, isCrit
+    dot.offBeatCandidate = nil
+    if not isCrit then
+        dot.tickSum = dot.tickSum + amount / factor
+        dot.normalTicks = dot.normalTicks + 1
+        saveLearnedTick(dot)
+    end
+    return anchorTick(dot, index, now), factor
+end
+
+-- An armed trap's first tick: an unmatched hit of its school and size on any mob, at least one tick interval
+-- after the trap was placed (the DoT ticks first one interval after it springs). Starts the DoT there, as tick
+-- 1. Without a learned size the description's share is only a rough guide (it may leave out attack power), so
+-- the range is wide (0.5-2.5x). If the trapped mob's first tick went unseen (not the target, focus or a visible
+-- nameplate), a later tick is taken for the first and the estimate runs high for that trap.
+local function springTrap(key, unit, amount, school, isCrit, now)
+    local trap = armedTrap
+    if not trap or school ~= trap.school then return false end
+    if now > trap.expiresAt + trap.interval + TICK_MATCH_WINDOW then armedTrap = nil; return false end
+    if now < trap.placedAt + trap.interval - TICK_MATCH_WINDOW then return false end
+    local dot = newDot(trap.spellID, trap.spellID, trap.name, trap.total, trap.school, trap.duration,
+        trap.interval, now - trap.interval)
+    if db.ticks[trap.spellID] then
+        if not plausibleTickAmount(dot, amount, isCrit, 1) then return false end
+    else
+        local share = trap.total / dot.totalTicks
+        local low, high = share * 0.5, share * 2.5
+        if isCrit then low, high = low * CRIT_MIN_RATIO, high * CRIT_MAX_RATIO end
+        if amount < low or amount > high then return false end
+    end
+    armedTrap = nil
+    dotsByTarget[key] = dotsByTarget[key] or {}
+    dotsByTarget[key][trap.name] = dot
+    local tickIndex = recordTick(dot, amount, isCrit, 1, now)
+    trace(string.format("TRAP %s sprung on %s: first tick %d%s %.1fs after placing (tick %d/%d)", trap.name, unit,
+        amount, isCrit and " CRIT" or "", now - trap.placedAt, tickIndex, dot.totalTicks))
+    return true
+end
+
 -- Returns the target key when this hit was the first tick of a DoT that was waiting for it (so the display
 -- can flash now that the DoT shows), else nil.
 local lastCombatSignature
@@ -784,8 +847,8 @@ local function onUnitCombat(unit, action, flag, amount, school)
     onHit(key, school)
     if isSecret(amount) or isSecret(school) or type(amount) ~= "number" then return end
     local isCrit = not isSecret(flag) and flag == "CRITICAL"
-    local dots = dotsByTarget[key]
-    if not dots then return end
+    if not dotsByTarget[key] and not armedTrap then return end
+    local dots = dotsByTarget[key] or {}
 
     -- The same hit fires for target, nameplateN, softenemy...: handle it once.
     local now = GetTime()
@@ -817,22 +880,15 @@ local function onUnitCombat(unit, action, flag, amount, school)
                 end
             end
         end
+        -- Returned like a waiting DoT's first tick: the trap's DoT shows (and flashes) from now.
+        if springTrap(key, unit, amount, school, isCrit, now) then return key end
         trace(string.format("HIT %d%s school %d on %s not matched to a DoT", amount, isCrit and " (crit)" or "",
             school, unit))
         return
     end
 
     local wasWaiting = isWaiting(best)
-    local factor = tickShape(best, tickNumberAt(best, now))
-    best.ticksSeen = best.ticksSeen + 1
-    best.lastTickAmount, best.lastTickShape, best.lastTickCrit = amount, factor, isCrit
-    best.offBeatCandidate = nil
-    if not isCrit then
-        best.tickSum = best.tickSum + amount / factor
-        best.normalTicks = best.normalTicks + 1
-        saveLearnedTick(best)
-    end
-    local tickIndex = anchorTick(best, bestIndex, now)
+    local tickIndex, factor = recordTick(best, amount, isCrit, bestIndex, now)
     trace(string.format("TICK %s %d%s on %s (tick %d/%d, expecting %.1f for this tick)%s", bestName, amount,
         isCrit and " CRIT" or "", unit, tickIndex, best.totalTicks, expectedTick(best) * factor,
         wasWaiting and ", now shown" or ""))

@@ -71,9 +71,12 @@ Consequences for the design:
 ## How the tracking works (high level)
 
 1. **Cast** (`UNIT_SPELLCAST_SUCCEEDED`, player only): parse the description (`parseDot`). Skip ignored spells
-   (AoE, channels, traps, delayed damage), heals and weapon poisons. Finishers (Rip, Rupture) read the
+   (AoE, channels, Explosive Trap, delayed damage), heals and weapon poisons. Finishers (Rip, Rupture) read the
    per-combo-point table. The DoT goes on the mob that was targeted at `UNIT_SPELLCAST_SENT` (matched by cast
    GUID): players who tab-dot have often changed target by the time an instant's cast event arrives.
+   **Immolation Trap** (`TRAP_DOTS`) only arms on cast: the trap casts the DoT when it springs, with no event for
+   the player. The first unmatched Fire hit of a plausible size on any mob, at least one tick after placing and
+   within the trap's minute, becomes its tick 1 (`springTrap`). Placing another Fire trap disarms it.
 2. **Combo points** are secret, so they're **counted** from builders ("Awards N combo point"), with dodges and
    misses taken back and resets on finishers and target changes. If unknown, finishers assume the lowest entry.
 3. **Cast outcomes:** a dodge/parry/miss/resist/immune on the cast's mob right after a cast removes that DoT (or
@@ -115,7 +118,7 @@ Tuning constants (tick windows, tolerances, fallbacks) are at the top of `DoesIt
     `"Interface\\Buttons\\WHITE8X8"`. Edit Lua with file tools, and grep `Interface` after scripted edits.
   - Guard every value that might be secret with `isSecret()` before comparing or indexing with it.
   - Bump `DB_VERSION` when learned tick data from older versions would be wrong.
-  - Lua allows 200 locals per function scope, including a file's top level. `DoesItDie.lua` uses 192, so new
+  - Lua allows 200 locals per function scope, including a file's top level. `DoesItDie.lua` uses 196, so new
     features with many top-level locals belong in a new file (added to the .toc) sharing `ns`, and setup-only
     locals go in `do ... end` blocks (as in the Display section). `test_load.py` runs Lua 5.1 (`lupa.lua51`),
     so going over fails it.
@@ -124,11 +127,15 @@ Tuning constants (tick windows, tolerances, fallbacks) are at the top of `DoesIt
 
 Verified in-game: Hunter (Serpent Sting, early version), low-level Warlock (Immolate, Corruption), Druid
 (Rip with counted combo points, Moonfire, misses). Every Forever damage tooltip for all classes goes through
-`test_spellbook.py`: 24 are tracked as DoTs, 13 deliberately ignored.
+`test_spellbook.py`: 24 are tracked as DoTs, plus Immolation Trap (unverified in-game: tick interval and
+whether its first tick lands one interval after springing are assumed from Classic), 12 deliberately ignored.
 
 Known limitations:
 
 - Only the **player's** DoTs are tracked.
+- Immolation Trap: if the trapped mob's first tick isn't seen (not target, focus or a visible nameplate), a later
+  tick is taken as tick 1 and that trap's estimate runs high. Someone else's Fire tick of a similar size while the
+  trap is armed can also be taken for it.
 - Proc DoTs with no cast (Deep Wounds, Ignite, poisons) aren't tracked. Their ticks show up as unmatched hits.
 - Uneven DoTs need a tick shape in `TICK_SHAPES` (Bane/Curse of Agony: 4 ticks at 0.5x, 4 at 1x, 4 at 1.5x the
   average, confirmed in-game); anything uneven that isn't listed is treated as even. Lacerate's stacks are
