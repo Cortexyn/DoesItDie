@@ -130,9 +130,23 @@ local DEFAULTS = {
     -- a known replacement target frame (EllesmereUI's) if there is one, else Blizzard's.
     customHealthBar = "",
     customIconAnchor = "",
-    -- Focus frame (Focus.lua): the marker on it too, on a custom bar or the one found
-    showOnFocus = true,
+    -- Focus frame (Focus.lua): the marker on it too, on a custom bar or the one found, in its own look (Focus tab)
+    focusMode = "markerIcon",
     customFocusHealthBar = "",
+    focusIcon = "skull",
+    focusIconSize = 18,
+    focusIconPosition = "left", -- the portrait is on the right of Blizzard's focus frame
+    focusIconOffsetX = 0,
+    focusIconOffsetY = 0,
+    focusDotColors = "school",
+    focusFillTexture = "stripes",
+    focusFillColor = "white",
+    focusFillOpacity = 40,
+    focusOutlineStyle = "dashed",
+    focusDashLength = 4,
+    focusOutlineThickness = 1,
+    focusOutlineColor = "gold",
+    focusOutlineOpacity = 75,
     -- Accuracy
     waitFirstTick = "off",
     estimateDuringCast = true,

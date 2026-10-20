@@ -115,6 +115,7 @@ local function syncDisplayHost()
     window.combatNote:SetShown(paused)
     window.mock:SetAlpha(paused and 0.3 or 1)
     window.mockPlate:SetAlpha(paused and 0.3 or 1)
+    window.mockFocus:SetAlpha(paused and 0.3 or 1)
     window.simulateButton:SetEnabled(not paused)
     window.flashButton:SetEnabled(not paused)
     if paused ~= window.previewPaused then
@@ -126,6 +127,7 @@ local function syncDisplayHost()
         end
         ns.setDisplayHost((not paused) and window.host or nil)
         ns.setPlatePreview((not paused) and window.plateHost or nil, preview)
+        ns.setFocusPreview((not paused) and window.focusHost or nil, preview)
     end
 end
 
@@ -133,6 +135,7 @@ local function updatePreview()
     if not window then return end
     window.healthBar:SetValue(preview.health)
     window.plateHealthBar:SetValue(preview.health)
+    window.focusHealthBar:SetValue(preview.health)
     local total = previewTotal()
     if total <= 0 then
         window.status:SetText(T("No DoTs on the target"))
@@ -921,6 +924,43 @@ local function buildTabs()
     plates.footer:SetPoint("BOTTOMLEFT", 10, 10)
     plates.footer:Hide()
 
+    -- The focus frame (Focus.lua): its own look, like the nameplates'. Its frame path is on the Advanced tab.
+    local focusOn = function(s) return s.focusMode ~= "off" end
+    local focusIcon = function(s) return s.focusMode == "markerIcon" end
+    local focusSingle = function(s) return focusOn(s) and s.focusDotColors == "single" end
+    local focusOutline = function(s) return focusOn(s) and s.focusOutlineStyle ~= "none" end
+    local focus = addTab("Focus")
+    focus:choice("focusMode", "Show on focus frame", lists.nameplateModes, { tooltip = "Draws the marker (and "
+        .. "optionally the kill icon) on your focus's health bar, for your DoTs on it, in its own look below. "
+        .. "/cast [@focus] macros put the DoT on your focus. For another addon's focus frame, see the Advanced tab." })
+    focus:choice("focusIcon", "Kill icon", lists.icons, { enabledIf = focusIcon })
+    focus:slider("focusIconSize", "Kill icon size", 12, 128, 1, { enabledIf = focusIcon })
+    focus:choice("focusIconPosition", "Kill icon position", lists.nameplateIconPositions, { enabledIf = focusIcon })
+    focus:slider("focusIconOffsetX", "Icon horizontal offset", -40, 40, 1,
+        { enabledIf = focusIcon, tooltip = "Pixels right (+) or left (-) of the chosen position." })
+    focus:slider("focusIconOffsetY", "Icon vertical offset", -40, 40, 1,
+        { enabledIf = focusIcon, tooltip = "Pixels up (+) or down (-) from the chosen position." })
+    focus:gap()
+    focus:choice("focusDotColors", "DoT colors", lists.dotColors, { enabledIf = focusOn })
+    focus:choice("focusFillTexture", "Fill style", lists.fills, { enabledIf = focusOn })
+    focus:choice("focusFillColor", "Fill color", lists.colors, { enabledIf = focusSingle })
+    focus:slider("focusFillOpacity", "Fill opacity", 0, 100, 5, { suffix = "%", enabledIf = focusOn })
+    focus:choice("focusOutlineStyle", "Outline", lists.outlines, { enabledIf = focusOn })
+    focus:choice("focusDashLength", "Dash length", lists.dashLengths,
+        { enabledIf = function(s) return focusOn(s) and s.focusOutlineStyle == "dashed" end })
+    focus:slider("focusOutlineThickness", "Outline thickness", 1, 3, 1, { enabledIf = focusOutline })
+    focus:choice("focusOutlineColor", "Outline color", lists.colors, { enabledIf = focusOutline })
+    focus:slider("focusOutlineOpacity", "Outline opacity", 10, 100, 5, { suffix = "%", enabledIf = focusOutline })
+    focus.footer = pushButton(window.settingsArea, "Copy from Nameplates tab", 180, function()
+        local db = ns.db
+        for plateKey, focusKey in pairs(ns.focusKeys) do
+            if plateKey ~= "nameplateMode" then db[focusKey] = db[plateKey] end
+        end
+        changed()
+    end)
+    focus.footer:SetPoint("BOTTOMLEFT", 10, 10)
+    focus.footer:Hide()
+
     local advanced = addTab("Advanced")
     advanced:choice("uiLanguage", "Window language", ns.locale.windowLanguages(), { tooltip = "The language of this "
         .. "window and the addon's messages. Auto follows your game client. Changes apply after /reload.",
@@ -953,14 +993,12 @@ local function buildTabs()
         .. "Fine-tune with the offsets on the Kill icon tab." })
     advanced:info("Health bar in use", function() return (ns.attachStatus()) end)
     advanced:info("Kill icon in use", function() return select(2, ns.attachStatus()) end)
-    -- Focus frame (Focus.lua).
+    -- Custom focus frame (Focus.lua; its look is on the Focus tab).
     advanced:gap()
-    advanced:checkbox("showOnFocus", "Show on focus frame", { tooltip = "The marker on your focus's health bar too, "
-        .. "for your DoTs on it, with the kill icon if the Nameplates tab shows one. Uses the Nameplates tab's look." })
     advanced:frame("customFocusHealthBar", "Focus health bar", "bar", { tooltip = "For unit frame addons that "
         .. "replace Blizzard's focus frame. Focus something, click Pick, then click its health bar. Leave empty for "
         .. "Blizzard's, or EllesmereUI's when it shows its own focus frame.",
-        enabledIf = function(settings) return settings.showOnFocus end })
+        enabledIf = function(settings) return settings.focusMode ~= "off" end })
     advanced:info("Focus bar in use", function() return ns.focusStatus and ns.focusStatus() or "" end)
 end
 
@@ -1064,6 +1102,38 @@ local function buildPreview(pane)
     window.plateHealthBar = plateBar
     window.plateHost = { plate = mockPlate, healthBar = plateBar }
 
+    -- A small focus frame (Focus.lua draws on it), shaped like Blizzard's: bar on the left, portrait on the right.
+    local focusLabel = pane:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    focusLabel:SetPoint("TOPLEFT", plateLabel, "BOTTOMLEFT", 0, -46)
+    focusLabel:SetText(T("Focus"))
+    local mockFocus = CreateFrame("Frame", nil, pane)
+    mockFocus:SetSize(170, 36)
+    mockFocus:SetPoint("TOPLEFT", focusLabel, "BOTTOMLEFT", 50, -4)
+    local focusPortrait = mockFocus:CreateTexture(nil, "ARTWORK")
+    focusPortrait:SetSize(32, 32)
+    focusPortrait:SetPoint("RIGHT", mockFocus, "RIGHT", 0, 0)
+    focusPortrait:SetTexture("Interface\\Icons\\Ability_Hunter_Pet_Boar")
+    local focusMask = mockFocus:CreateMaskTexture()
+    focusMask:SetTexture("Interface\\CharacterFrame\\TempPortraitAlphaMask", "CLAMPTOBLACKADDITIVE",
+        "CLAMPTOBLACKADDITIVE")
+    focusMask:SetAllPoints(focusPortrait)
+    focusPortrait:AddMaskTexture(focusMask)
+    local focusBar = CreateFrame("StatusBar", nil, mockFocus)
+    focusBar:SetSize(130, 12)
+    focusBar:SetPoint("RIGHT", focusPortrait, "LEFT", -6, -5)
+    focusBar:SetStatusBarTexture("Interface\\TargetingFrame\\UI-StatusBar")
+    focusBar:SetStatusBarColor(0.1, 0.8, 0.1)
+    focusBar:SetMinMaxValues(0, 100)
+    local focusBack = focusBar:CreateTexture(nil, "BACKGROUND")
+    focusBack:SetAllPoints()
+    focusBack:SetColorTexture(0.25, 0.08, 0.08, 1)
+    local focusName = mockFocus:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    focusName:SetPoint("BOTTOMLEFT", focusBar, "TOPLEFT", 0, 3)
+    focusName:SetText(T("Mottled Boar"))
+    window.mockFocus = mockFocus
+    window.focusHealthBar = focusBar
+    window.focusHost = { frame = mockFocus, healthBar = focusBar }
+
     local hint = pane:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
     hint:SetPoint("BOTTOMLEFT", pane, "BOTTOMLEFT", 12, 12)
     hint:SetWidth(PREVIEW_WIDTH - 24)
@@ -1146,6 +1216,7 @@ local function createWindow()
         ns.setPreviewState(nil)
         ns.setDisplayHost(nil)
         ns.setPlatePreview(nil)
+        ns.setFocusPreview(nil)
     end)
     -- Combat hands the display back to the real target, and after combat back to the preview.
     window:RegisterEvent("PLAYER_REGEN_DISABLED")

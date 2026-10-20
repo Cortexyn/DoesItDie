@@ -273,7 +273,7 @@ end""")(lua.globals().frames), True)
 check("untranslated text stays English", ns.locale.T("Simulate fight"), "Simulate fight")
 step("display loop with the window's preview", lambda: H.update(0.2))
 
-for tab in ("Kill icon", "Marker", "Effects", "Text", "Nameplates", "Advanced"):
+for tab in ("Kill icon", "Marker", "Effects", "Text", "Nameplates", "Focus", "Advanced"):
     step(f"open tab {tab}", lambda tab=tab: H.clickText(tab))
 
 
@@ -319,6 +319,9 @@ check("  kill icon frame shown", G.DoesItDieSkull.shown, True)
 check("  marker layered above the window's strata", G.DoesItDieRemaining.strata, "FULLSCREEN")
 
 
+same = lua.eval("function(a, b) return rawequal(a, b) end")
+
+
 def preview_plate_markers():
     # The mock nameplate is the window's only frame whose child StatusBar is sized 140x10.
     for f in G.frames.values():
@@ -331,6 +334,29 @@ markers_on_preview_plate = preview_plate_markers()
 check("  preview nameplate got a marker", len(markers_on_preview_plate) >= 1, True)
 check("  preview nameplate marker filled to the DoT damage",
       round(markers_on_preview_plate[0].value) if markers_on_preview_plate else None, 50)
+preview_focus_bar = G.DoesItDieOptions.focusHealthBar
+preview_focus_markers = [f for f in G.frames.values() if f.kind == "StatusBar" and f.allPoints is not None
+                         and same(f.allPoints, preview_focus_bar)]
+check("  preview focus frame got a marker", len(preview_focus_markers), 1)
+check("  preview focus marker filled to the DoT damage",
+      round(preview_focus_markers[0].value) if preview_focus_markers else None, 50)
+check("  preview focus marker shown", preview_focus_markers[0].shown if preview_focus_markers else None, True)
+
+
+def preview_focus_icon_window():
+    mock_focus = preview_focus_bar.parent
+    return next((c for c in mock_focus.children.values() if c.kind == "Frame" and c.clips), None)
+
+
+G.DoesItDieDB.focusIconSize, G.DoesItDieDB.nameplateIconSize = 40, 18
+step("focus kill icon size 40, nameplates' 18", lambda: H.update(0.2))
+check("  the focus uses its own look", preview_focus_icon_window().width if preview_focus_icon_window() else None, 40)
+step("Copy from Nameplates tab", lambda: (H.clickText("Focus"), H.clickText("Copy from Nameplates tab"),
+                                          H.update(0.2)))
+check("  copied the nameplates' icon size", G.DoesItDieDB.focusIconSize, 18)
+check("  and their fill", G.DoesItDieDB.focusFillTexture, G.DoesItDieDB.plateFillTexture)
+check("  but not their show mode", G.DoesItDieDB.focusMode, "markerIcon")
+check("  preview follows", preview_focus_icon_window().width if preview_focus_icon_window() else None, 18)
 
 
 def pick_outline_none():
@@ -526,7 +552,6 @@ lua.execute("""
 """)
 custom_bar = G.MyTargetFrame.Health
 check("frame path of an unnamed child found by its key", ns.framePath(custom_bar), "MyTargetFrame.Health")
-same = lua.eval("function(a, b) return rawequal(a, b) end")
 check("  and resolves back to it", same(ns.resolveFramePath("MyTargetFrame.Health"), custom_bar), True)
 check("  a missing path resolves to nothing", ns.resolveFramePath("NoSuchFrame.Health"), None)
 
@@ -802,10 +827,10 @@ lua.execute("focusGuid = nil")
 step("focus cleared", lambda: H.update(0.2))
 check("  hidden", focus_markers[0].shown if focus_markers else None, False)
 lua.execute('focusGuid = "Creature-0-1-2-3-3099-0000F0"')
-G.DoesItDieDB.showOnFocus = False
+G.DoesItDieDB.focusMode = "off"
 step("focus back, Show on focus frame off", lambda: H.update(0.2))
 check("  hidden", focus_markers[0].shown if focus_markers else None, False)
-G.DoesItDieDB.showOnFocus = True
+G.DoesItDieDB.focusMode = "markerIcon"
 lua.execute("""
     local eui = CreateFrame("Frame", "EllesmereUIUnitFrames_Focus", UIParent)
     eui.Health = CreateFrame("StatusBar", nil, eui)
@@ -815,7 +840,7 @@ eui_focus = markers_on(G.EllesmereUIUnitFrames_Focus.Health)
 check("  marker moves to its health bar", len(eui_focus), 1)
 check("  status names it", ns.focusStatus(), "EllesmereUI's focus frame")
 check("  Advanced tab has the focus rows", all(H.rowWidget(label, kind) is not None for label, kind in
-      (("Show on focus frame", "CheckButton"), ("Focus health bar", "EditBox"))), True)
+      (("Show on focus frame", "Button"), ("Focus health bar", "EditBox"))), True)
 
 
 def lua_quote(text):

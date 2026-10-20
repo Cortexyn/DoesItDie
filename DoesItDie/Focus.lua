@@ -2,8 +2,10 @@
 -- for your DoTs on the focused mob. Based on toughnuts99's patch (issue #12).
 --
 -- Tracking is per mob already (ns.dotBreakdownForUnit) and UNIT_COMBAT reports hits on the focus, so this is only
--- display: it reuses the nameplate widgets and their look (Nameplates tab, ns.barMarker), drawn on a custom focus
--- bar (Advanced tab, a frame path like the target's), else EllesmereUI's focus frame, else Blizzard's.
+-- display: it reuses the nameplate widgets (ns.barMarker) in a look of its own (Focus tab, focus* settings, read
+-- through a view that maps the widgets' plate* keys to them), drawn on a custom focus bar (Advanced tab, a frame
+-- path like the target's), else EllesmereUI's focus frame, else Blizzard's. The options window's preview has a
+-- mock focus frame drawn the same way with its plain numbers (ns.setFocusPreview).
 --
 -- The widgets hang off a frame of our own rather than the bar's parent: unit frame addons may put the bar in a
 -- clipping frame, which would cut off a kill icon beside the bar. So they're hidden by hand whenever there's no
@@ -50,12 +52,49 @@ function ns.focusStatus()
     return select(2, focusBar(ns.db))
 end
 
+-- The focus look: the nameplate widgets read plate* (and nameplateMode, nameplateIcon*) settings; this view
+-- answers those keys with the focus* ones, and everything else (showMarkers) straight from the settings.
+local FOCUS_KEYS = {
+    nameplateMode = "focusMode", plateIcon = "focusIcon", nameplateIconSize = "focusIconSize",
+    nameplateIconPosition = "focusIconPosition", plateIconOffsetX = "focusIconOffsetX",
+    plateIconOffsetY = "focusIconOffsetY", plateDotColors = "focusDotColors", plateFillTexture = "focusFillTexture",
+    plateFillColor = "focusFillColor", plateFillOpacity = "focusFillOpacity", plateOutlineStyle = "focusOutlineStyle",
+    plateDashLength = "focusDashLength", plateOutlineThickness = "focusOutlineThickness",
+    plateOutlineColor = "focusOutlineColor", plateOutlineOpacity = "focusOutlineOpacity",
+}
+local focusLook = setmetatable({}, { __index = function(_, key) return ns.db[FOCUS_KEYS[key] or key] end })
+ns.focusKeys = FOCUS_KEYS -- (Options.lua's "Copy from Nameplates tab")
+
 local host = CreateFrame("Frame", nil, UIParent)
 host:SetAllPoints(UIParent)
 local widgets
 
 local function hide()
     if widgets then ns.barMarker.hide(widgets) end
+end
+
+-- The options window's mock focus frame: { frame, healthBar } and the preview state ({ health, dots } in % of max
+-- health), or nil.
+local previewHost, previewState, previewWidgets
+
+function ns.setFocusPreview(mock, state)
+    previewHost, previewState = mock, state
+    if not mock and previewWidgets then ns.barMarker.hide(previewWidgets) end
+end
+
+local function refreshPreview(db)
+    if not previewHost or not previewState then return end
+    ns.barMarker.pin(previewHost.frame)
+    previewWidgets = ns.barMarker.widgetsFor(previewHost.frame, previewHost.healthBar)
+    local entries, total = {}, 0
+    for _, dot in ipairs(previewState.dots) do
+        if dot.damage > 0 then
+            table.insert(entries, dot)
+            total = total + dot.damage
+        end
+    end
+    if total <= 0 or db.focusMode == "off" then return ns.barMarker.hide(previewWidgets) end
+    ns.barMarker.draw(previewWidgets, entries, total, 100, math.max(previewState.health, 0.01), focusLook)
 end
 
 local function shown(bar)
@@ -71,7 +110,8 @@ end
 local function refresh()
     local db = ns.db
     if not db or not ns.barMarker then return end
-    if not db.showOnFocus or not UnitExists("focus") or dead() then return hide() end
+    refreshPreview(db)
+    if db.focusMode == "off" or not UnitExists("focus") or dead() then return hide() end
     local bar = focusBar(db)
     if not bar or not shown(bar) then return hide() end
     local entries, total = ns.dotBreakdownForUnit("focus")
@@ -79,7 +119,7 @@ local function refresh()
     ns.barMarker.pin(host)
     -- The bar isn't the host's child: take its strata so the marker draws above it.
     widgets = ns.barMarker.widgetsFor(host, bar, false, true)
-    ns.barMarker.draw(widgets, entries, total, UnitHealthMax("focus"), UnitHealth("focus"), db)
+    ns.barMarker.draw(widgets, entries, total, UnitHealthMax("focus"), UnitHealth("focus"), focusLook)
 end
 
 local driver = CreateFrame("Frame")
