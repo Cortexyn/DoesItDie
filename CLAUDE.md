@@ -102,6 +102,8 @@ Tuning constants (tick windows, tolerances, fallbacks) are at the top of `DoesIt
 - **Game install:** the Forever beta lives in `C:\Program Files (x86)\World of Warcraft\_classic_beta_\`.
   `Interface\AddOns\DoesItDie` there is a **junction** to this project's `DoesItDie/`, so edits here are live.
 - **Reload:** `/reload` picks up Lua changes. **New files** (textures) need a full client restart.
+- **Releasing:** add the version's notes to the top of `CHANGELOG.md` (player-facing wording), commit, then push a
+  `v*` tag. The packager uploads the whole file as the release's changelog (`.pkgmeta` `manual-changelog`).
 - **Trace log:** the addon always logs casts, ticks, estimates and decisions to its SavedVariables (`db.log`,
   last 500 lines), written on reload or logout to
   `…\_classic_beta_\WTF\Account\<account>\SavedVariables\DoesItDie.lua`. Reading this after the user plays is
