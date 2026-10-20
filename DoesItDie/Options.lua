@@ -11,7 +11,8 @@ local ADDON_NAME, ns = ...
 local T = ns.locale.T -- the window's text in the window language (Locale.lua)
 
 local WHITE = "Interface\\Buttons\\WHITE8X8"
-local WINDOW_WIDTH, WINDOW_HEIGHT = 760, 548 -- tall enough for the longest tab (Nameplates, 15 rows)
+-- Tall enough for the longest tabs (Nameplates, Focus: 15 rows); wide enough for the seven tab names in a row.
+local WINDOW_WIDTH, WINDOW_HEIGHT = 800, 548
 local HEADER_HEIGHT = 52 -- title bar: title, presets, close button
 local PREVIEW_WIDTH = 290
 local ROW_HEIGHT = 26
