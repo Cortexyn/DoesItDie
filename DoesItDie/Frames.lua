@@ -1,5 +1,6 @@
 -- DoesItDie custom frames: lets the marker and kill icon attach to another addon's target frame (unit frame
--- replacements) instead of Blizzard's, which those addons hide. Advanced options, off by default.
+-- replacements) instead of Blizzard's, which those addons hide. Advanced options, off by default; known
+-- replacements (EllesmereUI's) are used without a setting.
 --
 -- A setting holds a frame path: a global frame name, optionally followed by keys, e.g. "MyTargetFrame.Health".
 -- The options' "Pick" button fills one in from the frame under the mouse. The marker only needs the health
@@ -85,6 +86,39 @@ function ns.frameRoot(region)
         current = parent
     end
     return current
+end
+
+-- Replacement target frames used without a setting: the frame's global name, its health bar and portrait keys,
+-- and whose it is. Each only exists while its addon draws its own target frame (EllesmereUI creates its frame
+-- only when its target frame is enabled).
+local KNOWN_TARGET_FRAMES = {
+    { frame = "EllesmereUIUnitFrames_Target", bar = "Health", portrait = "Portrait", owner = "EllesmereUI's" },
+}
+
+-- Whether `region` and its ancestors below `root` are shown. The root itself is left out: a target frame hides
+-- while there's no target.
+local function shownBelow(region, root)
+    local current = region
+    for _ = 1, 20 do
+        if current == nil or current == root then return true end
+        if plain(current, "IsShown") == false then return false end
+        current = plain(current, "GetParent")
+    end
+    return true
+end
+
+-- A known replacement target frame that's there: its health bar, its portrait if it's shown (EllesmereUI
+-- hides its portrait when portraits are off), and whose it is ("EllesmereUI's"). Nil if none is there.
+function ns.knownTargetFrame()
+    for _, known in ipairs(KNOWN_TARGET_FRAMES) do
+        local root = ns.resolveFramePath(known.frame)
+        local bar = root and ns.resolveFramePath(known.frame .. "." .. known.bar)
+        if bar then
+            local portrait = ns.resolveFramePath(known.frame .. "." .. known.portrait)
+            if portrait and not shownBelow(portrait, root) then portrait = nil end
+            return bar, portrait, known.owner
+        end
+    end
 end
 
 ---------------------------------------------------------------------------
