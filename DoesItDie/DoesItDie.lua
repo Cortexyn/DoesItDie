@@ -133,6 +133,7 @@ local DEFAULTS = {
     -- Focus frame (Focus.lua): the marker on it too, on a custom bar or the one found, in its own look (Focus tab)
     focusMode = "markerIcon",
     customFocusHealthBar = "",
+    customPlateHealthBar = "", -- (Nameplates.lua) keys from Blizzard's nameplate to a plate addon's bar
     focusIcon = "skull",
     focusIconSize = 18,
     focusIconPosition = "left", -- the portrait is on the right of Blizzard's focus frame

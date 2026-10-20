@@ -410,7 +410,7 @@ local function frameRow(parent, key, labelText, kind, opts)
     opts = opts or {}
     local row = makeRow(parent, labelText, opts)
     local box = CreateFrame("EditBox", nil, row, "BackdropTemplate")
-    box:SetSize(row.layout.control - 58, 22)
+    box:SetSize(row.layout.control - (opts.noPick and 0 or 58), 22)
     box:SetPoint("LEFT", row, "LEFT", row.layout.label, 0)
     setBackdrop(box, 0.13)
     box:SetFontObject("GameFontHighlightSmall")
@@ -428,7 +428,7 @@ local function frameRow(parent, key, labelText, kind, opts)
     box:SetScript("OnEditFocusLost", function(self)
         if strtrim(self:GetText() or "") ~= db()[key] then save(self:GetText()) end
     end)
-    local pick = pushButton(row, "Pick", 52, function()
+    local pick = (not opts.noPick) and pushButton(row, "Pick", 52, function()
         ns.print(kind == "bar"
             and T("Click your target's health bar (you may need to move this window). Right-click cancels.")
             or T("Click where the kill icon should go (you may need to move this window). Right-click cancels."))
@@ -438,7 +438,7 @@ local function frameRow(parent, key, labelText, kind, opts)
             ns.print(string.format(T("Picked %s."), path))
         end)
     end)
-    pick:SetPoint("LEFT", box, "RIGHT", 6, 0)
+    if pick then pick:SetPoint("LEFT", box, "RIGHT", 6, 0) end
     function row:Refresh()
         if not box:HasFocus() then box:SetText(db()[key] or "") end
         self:ApplyEnabled(box)
@@ -1001,6 +1001,13 @@ local function buildTabs()
         .. "Blizzard's, or EllesmereUI's when it shows its own focus frame.",
         enabledIf = function(settings) return settings.focusMode ~= "off" end })
     advanced:info("Focus bar in use", function() return ns.focusStatus and ns.focusStatus() or "" end)
+    -- Nameplate addons' bars (Nameplates.lua): found automatically; this is for one the search misses.
+    advanced:gap()
+    advanced:frame("customPlateHealthBar", "Nameplate health bar", "bar", { noPick = true, tooltip = "Most "
+        .. "nameplate addons' health bars are found automatically (Plater, EllesmereUI, Platynator, ...). If the "
+        .. "marker doesn't show on yours, type the keys from Blizzard's nameplate to its bar, like "
+        .. "unitFrame.healthBar. /did plates logs what each plate uses. Leave empty for automatic." })
+    advanced:info("Nameplate bar in use", function() return ns.plateBarStatus and ns.plateBarStatus() or "" end)
 end
 
 local function buildPreview(pane)

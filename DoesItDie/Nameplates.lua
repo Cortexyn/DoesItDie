@@ -98,35 +98,164 @@ local function findPlatynatorBar(plate, unit)
     return platyBarFor(unit)
 end
 
--- The health bar a nameplate shows, the frame our widgets go on, and the path the bar was found under.
--- EllesmereUI parks Blizzard's bar on a hidden frame and shows its own plate: a pooled frame parented to the
--- Blizzard plate while in use, listed by unit in its addon table, with the bar at .health. Our widgets go on
--- that frame so they fade, scale and hide with it. Platynator's displays aren't tied to one plate (they're
--- reassigned between units), so with it our widgets stay on Blizzard's plate and only anchor to its bar.
+-- False only when the bar is known to be hidden or fully transparent, e.g. a plate addon took over and parked or
+-- faded out Blizzard's: the marker would otherwise draw over nothing.
+local function barShown(bar)
+    local ok, visible = pcall(bar.IsVisible, bar)
+    if ok and not isSecret(visible) and visible == false then return false end
+    local okAlpha, alpha = pcall(bar.GetEffectiveAlpha, bar)
+    if okAlpha and type(alpha) == "number" and not isSecret(alpha) and alpha <= 0 then return false end
+    return true
+end
+
+local function isStatusBar(value)
+    if type(value) ~= "table" or type(value.GetObjectType) ~= "function" then return false end
+    local ok, kind = pcall(value.GetObjectType, value)
+    return ok and kind == "StatusBar"
+end
+
+local function forbidden(frame)
+    local ok, result = pcall(function() return frame.IsForbidden and frame:IsForbidden() end)
+    return not ok or result == true
+end
+
+-- The Advanced tab's "Nameplate health bar": keys from the Blizzard nameplate, e.g. "unitFrame.healthBar".
+local function resolveFromPlate(plate, path)
+    local current = plate
+    for key in string.gmatch(path, "[^%.]+") do
+        local ok, value = pcall(function() return current[key] end)
+        if not ok or type(value) ~= "table" then return nil end
+        current = value
+    end
+    if current ~= plate and isStatusBar(current) then return current end
+end
+
+-- Automatic search for a nameplate addon's health bar (Plater, KUI, ...): they hang their own frames on Blizzard's
+-- nameplate and keep the bar in a field named like "health" (healthBar, health, HealthBar). Breadth-first through
+-- the plate's frames (not Blizzard's UnitFrame), the first shown StatusBar under such a key wins. Returns the bar
+-- and where it was found ("unitFrame.healthBar"). Reading every field of a frame is slow, so each plate's result
+-- is kept (searchCache) and only searched again, at most once a second, when it's gone or hidden.
+local SEARCH_DEPTH = 4
+local SEARCH_INTERVAL = 1
+local searchCache = {} -- plate -> { bar, path, at }
+
+-- Whether `frame` sits inside `plate` (fields can point anywhere: a frame's back-reference to UIParent would
+-- otherwise lead the search to some other "health" bar).
+local function isUnder(frame, plate)
+    local current = frame
+    for _ = 1, 12 do
+        local ok, parent = pcall(current.GetParent, current)
+        if not ok or parent == nil then return false end
+        if parent == plate then return true end
+        current = parent
+    end
+    return false
+end
+
+local function searchHealthBar(plate)
+    local queue = { { frame = plate, path = "", depth = 0 } }
+    local seen = { [plate] = true }
+    local head = 1
+    while queue[head] do
+        local item = queue[head]
+        head = head + 1
+        local frame = item.frame
+        -- Fields of this frame: a shown StatusBar under a "health" key is the answer; other frames are visited.
+        local ok, fields = pcall(function()
+            local found = {}
+            for key, value in pairs(frame) do
+                if type(key) == "string" and type(value) == "table" then table.insert(found, { key, value }) end
+            end
+            return found
+        end)
+        if ok then
+            table.sort(fields, function(a, b) return a[1] < b[1] end) -- the same answer every time
+            for _, field in ipairs(fields) do
+                local key, value = field[1], field[2]
+                if key:lower():find("health", 1, true) and isStatusBar(value) and not forbidden(value)
+                    and isUnder(value, plate) and barShown(value)
+                    and value ~= (plate.UnitFrame and plate.UnitFrame.healthBar) then
+                    return value, item.path .. key
+                end
+            end
+            if item.depth < SEARCH_DEPTH then
+                for _, field in ipairs(fields) do
+                    local key, value = field[1], field[2]
+                    if not seen[value] and value ~= plate.UnitFrame and type(value.GetObjectType) == "function"
+                        and not isStatusBar(value) and not forbidden(value) and isUnder(value, plate) then
+                        seen[value] = true
+                        table.insert(queue, { frame = value, path = item.path .. key .. ".", depth = item.depth + 1 })
+                    end
+                end
+            end
+        end
+    end
+end
+
+local function autoHealthBar(plate)
+    local cached = searchCache[plate]
+    local now = GetTime()
+    if cached and cached.bar and barShown(cached.bar) then return cached.bar, cached.path end
+    if cached and now - cached.at < SEARCH_INTERVAL then return nil end
+    local ok, bar, path = pcall(searchHealthBar, plate)
+    if not ok then bar, path = nil, nil end
+    searchCache[plate] = { bar = bar, path = path, at = now }
+    return bar, path
+end
+
+-- The health bar a nameplate shows, the frame our widgets go on, the path the bar was found under, and whether
+-- it's a plate addon's bar (drawn in a strata of its own, which ours must match). In order:
+--   * the Advanced tab's path from the plate, when set and shown
+--   * EllesmereUI: it parks Blizzard's bar on a hidden frame and shows its own plate, a pooled frame parented to
+--     the Blizzard plate while in use, listed by unit in its addon table, with the bar at .health. Our widgets go
+--     on that frame so they fade, scale and hide with it.
+--   * Platynator: its displays aren't tied to one plate (they're reassigned between units, and may hang off
+--     UIParent), so our widgets stay on Blizzard's plate and only anchor to its bar.
+--   * Blizzard's own bar, while it's shown
+--   * the automatic search (searchHealthBar), for other plate addons
+--   * Blizzard's bar, hidden: nothing is drawn (the probe still reports it)
 local function findHealthBar(plate, unit)
+    local db = ns.db
+    local custom = db and strtrim(db.customPlateHealthBar or "") or ""
+    if custom ~= "" then
+        local bar = resolveFromPlate(plate, custom)
+        if bar and barShown(bar) then return bar, plate, "custom " .. custom, true end
+    end
     local eui = EllesmereNameplates_NS
     local euiPlate = type(eui) == "table" and type(eui.plates) == "table" and eui.plates[unit]
     if type(euiPlate) == "table" and euiPlate.nameplate == plate and euiPlate.health then
-        return euiPlate.health, euiPlate, "EllesmereUI plate.health"
+        return euiPlate.health, euiPlate, "EllesmereUI plate.health", true
     end
     local ok, platyBar = pcall(findPlatynatorBar, plate, unit)
-    if ok and platyBar then return platyBar, plate, "Platynator health widget" end
+    if ok and platyBar then return platyBar, plate, "Platynator health widget", true end
+
     local unitFrame = plate.UnitFrame
-    if not unitFrame then return nil, nil, "no UnitFrame" end
-    if unitFrame.healthBar then return unitFrame.healthBar, plate, "UnitFrame.healthBar" end
-    local container = unitFrame.HealthBarsContainer
-    if container and container.healthBar then
-        return container.healthBar, plate, "UnitFrame.HealthBarsContainer.healthBar"
+    local blizzard, blizzardPath
+    if unitFrame then
+        local container = unitFrame.HealthBarsContainer
+        if unitFrame.healthBar then
+            blizzard, blizzardPath = unitFrame.healthBar, "UnitFrame.healthBar"
+        elseif container and container.healthBar then
+            blizzard, blizzardPath = container.healthBar, "UnitFrame.HealthBarsContainer.healthBar"
+        elseif unitFrame.HealthBar then
+            blizzard, blizzardPath = unitFrame.HealthBar, "UnitFrame.HealthBar"
+        end
     end
-    if unitFrame.HealthBar then return unitFrame.HealthBar, plate, "UnitFrame.HealthBar" end
-    return nil, nil, "no health bar found"
+    if blizzard and barShown(blizzard) then return blizzard, plate, blizzardPath, false end
+    local found, path = autoHealthBar(plate)
+    if found then return found, plate, "auto " .. path, true end
+    if blizzard then return blizzard, plate, blizzardPath, false end
+    return nil, nil, unitFrame and "no health bar found" or "no UnitFrame"
 end
 
--- False only when the bar is known to be hidden, e.g. a plate addon took over and parked Blizzard's: the
--- marker would otherwise draw over nothing.
-local function barShown(bar)
-    local ok, visible = pcall(bar.IsVisible, bar)
-    return not ok or isSecret(visible) or visible ~= false
+-- What the last drawn nameplate's marker was on, for the options window.
+local lastBarPath
+
+function ns.plateBarStatus()
+    if not lastBarPath then return "|cff888888none drawn yet|r" end
+    if lastBarPath:find("^custom ") then return "|cff66ff66" .. lastBarPath:sub(8) .. "|r" end
+    if lastBarPath:find("^auto ") then return "found: " .. lastBarPath:sub(6) end
+    return lastBarPath
 end
 
 ---------------------------------------------------------------------------
@@ -362,10 +491,10 @@ end
 local function updatePlate(unit, plate, db)
     local entries, total = ns.dotBreakdownForUnit(unit)
     if total <= 0 or unitIsDead(unit) then return end
-    local healthBar, host, path = findHealthBar(plate, unit)
+    local healthBar, host, path, addonBar = findHealthBar(plate, unit)
     if not healthBar or not barShown(healthBar) then return end
     seenHosts[host] = true
-    local addonBar = path == "EllesmereUI plate.health" or path == "Platynator health widget"
+    lastBarPath = path
     drawPlate(widgetsFor(host, healthBar, host ~= plate, addonBar), entries, total, UnitHealthMax(unit),
         UnitHealth(unit), db)
 end

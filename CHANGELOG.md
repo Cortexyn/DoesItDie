@@ -1,5 +1,9 @@
 # DoesItDie
 
+## Unreleased
+
+- **Plater and other nameplate addons:** the nameplate marker finds their health bars automatically. If yours still doesn't show it, Advanced > Nameplate health bar takes the path to its bar.
+
 ## v0.8.0
 
 **Restart the game fully after updating** (not just /reload): this version adds new files.

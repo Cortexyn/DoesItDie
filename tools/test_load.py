@@ -51,6 +51,7 @@ function methods.Hide(self)
 end
 function methods.SetShown(self, v) if v then self:Show() else self:Hide() end end
 function methods.IsShown(self) return self.shown end
+function methods.GetObjectType(self) return self.kind end
 function methods.IsVisible(self)
     if not self.shown then return false end
     local parent = self.parent
@@ -889,6 +890,61 @@ lua.execute("""
     UnitGUID, C_NamePlate.GetNamePlateForUnit = savedUnitGUID, savedGetPlate
     targetGuid = nil
     issecretvalue = nil
+""")
+
+
+# Other nameplate addons (Plater, ...): Blizzard's plate bar hidden, the addon's own frame on the plate with its bar
+# under a "health" key, found by the automatic search; then the Advanced tab's path for one it would miss.
+lua.execute("""
+    EllesmereNameplates_NS, Platynator = nil, nil
+    targetGuid = "Creature-0-1-2-3-3099-0000A1"
+    FakePlate.UnitFrame:Hide()
+    FakePlate.unitFrame = CreateFrame("Frame", nil, FakePlate)
+    FakePlate.unitFrame.PlateFrame = FakePlate -- (a back-reference, as Plater keeps)
+    FakePlate.unitFrame.healthBar = CreateFrame("StatusBar", nil, FakePlate.unitFrame)
+    PlaterBar = FakePlate.unitFrame.healthBar
+    -- A reference to a frame outside the plate, with its own health bar, under a key that's searched first.
+    local outside = CreateFrame("Frame", nil, UIParent)
+    outside.healthBar = CreateFrame("StatusBar", nil, outside)
+    FakePlate.aaaElsewhere = outside
+""")
+
+
+def plate_cast():
+    H.fire("PLAYER_TARGET_CHANGED")
+    H.fire("UNIT_SPELLCAST_SENT", "player", "", "cast-p1", 172)
+    H.fire("UNIT_SPELLCAST_SUCCEEDED", "player", "cast-p1", 172)
+    H.update(0.2)
+
+
+G.DoesItDieDB.nameplateMode = "markerIcon"
+step("Plater-like plate: Corruption on its mob", plate_cast)
+plater_markers = markers_on(G.PlaterBar)
+check("  marker found Plater's bar on its own", len(plater_markers), 1)
+check("  filled to Corruption's 40", plater_markers[0].value if plater_markers else None, 40)
+check("  shown", plater_markers[0].shown if plater_markers else None, True)
+check("  status says where", ns.plateBarStatus(), "found: unitFrame.healthBar")
+step("/did plates with it", lambda: G.SlashCmdList.DOESITDIE("plates"))
+check("  probe names the bar", any("healthBar=auto unitFrame.healthBar" in l
+                                   for l in G.DoesItDieDB.log.values()), True)
+lua.execute("""
+    FakePlate.mine = CreateFrame("Frame", nil, FakePlate)
+    FakePlate.mine.bar = CreateFrame("StatusBar", nil, FakePlate.mine)
+    MineBar = FakePlate.mine.bar
+""")
+G.DoesItDieDB.customPlateHealthBar = "mine.bar"
+step("Advanced: Nameplate health bar = mine.bar", lambda: H.update(0.2))
+mine_markers = markers_on(G.MineBar)
+check("  marker on that bar", len(mine_markers), 1)
+check("  status shows the path", "mine.bar" in ns.plateBarStatus(), True)
+G.DoesItDieDB.customPlateHealthBar = "nothing.here"
+step("  a path that doesn't exist: back to the automatic search", lambda: H.update(0.2))
+check("  on Plater's bar again", ns.plateBarStatus(), "found: unitFrame.healthBar")
+G.DoesItDieDB.customPlateHealthBar = ""
+lua.execute("""
+    FakePlate.UnitFrame:Show()
+    FakePlate.unitFrame, FakePlate.mine = nil, nil
+    targetGuid = nil
 """)
 
 
