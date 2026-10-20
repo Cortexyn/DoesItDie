@@ -1,9 +1,13 @@
 # DoesItDie
 
-## Unreleased
+## v0.8.0
+
+**Restart the game fully after updating** (not just /reload): this version adds new files.
 
 - **Focus frame:** the marker and kill icon also show on your focus's health bar (Blizzard's, EllesmereUI's, or a custom one under Advanced), with its own tab (Focus) for its look and a focus frame in the options preview. `/cast [@focus]` macros put the DoT on your focus. Thanks to toughnuts99 for the patch.
 - **Dungeons:** where mobs can't be told apart by ID, DoTs are tracked per mob through its nameplate, so tab-dotting a pack works (needs enemy nameplates on). Thanks to Staypuft.
+- **Window language** setting (Advanced): the options window can now be translated. No translations yet; see issue #10 on GitHub if you'd like to help.
+- The options window is a little wider, so all tabs fit.
 
 ## v0.7.1
 
