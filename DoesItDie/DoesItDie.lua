@@ -1887,6 +1887,49 @@ function ns.resetLearnedTicks()
     print("Learned tick sizes cleared.")
 end
 
+function ns.forgetLearnedTick(key)
+    db.ticks[key] = nil
+    trace("FORGET learned tick size for " .. tostring(key))
+end
+
+-- The options window's list of learned tick sizes: per entry its key in db.ticks, spellID, comboPoints (finishers,
+-- whose keys are "spellIDxN"), perTick, and when the client has them the spell's name and what its description
+-- predicts (tooltipPerTick, ticks, interval, duration, school). Shaped DoTs (Agony) learn their average tick.
+-- Sorted by name, then combo points.
+function ns.learnedTickList()
+    local list = {}
+    for key, perTick in pairs(db.ticks) do
+        local spellID, points = key, nil
+        if type(key) == "string" then
+            local id, n = key:match("^(%d+)x(%d+)$")
+            spellID, points = tonumber(id), tonumber(n)
+        end
+        if type(spellID) == "number" and type(perTick) == "number" then
+            local entry = { key = key, spellID = spellID, comboPoints = points, perTick = perTick }
+            local ok, name, desc = pcall(spellNameAndDescription, spellID)
+            if ok and type(name) == "string" and not isSecret(name) then entry.name = name end
+            if ok and entry.name and type(desc) == "string" and not isSecret(desc) then
+                local total, school, duration, stated = parseDot(desc, points or 1)
+                if total then
+                    local interval = stated or KNOWN_TICK_INTERVALS[name] or DEFAULT_TICK_INTERVAL
+                    entry.ticks = math.max(1, math.floor(duration / interval + 0.5))
+                    entry.interval, entry.duration = interval, duration
+                    entry.school = SCHOOL_BY_NAME[name] or school
+                    entry.tooltipPerTick = total / entry.ticks
+                end
+            end
+            entry.color = entry.school and SCHOOL_COLORS[entry.school]
+            table.insert(list, entry)
+        end
+    end
+    table.sort(list, function(a, b)
+        local an, bn = a.name or ("~" .. a.spellID), b.name or ("~" .. b.spellID)
+        if an ~= bn then return an < bn end
+        return (a.comboPoints or 0) < (b.comboPoints or 0)
+    end)
+    return list
+end
+
 -- host: { healthBar, portrait, layerFrame } to draw on the options window's mock target frame, or nil to go
 -- back to the real target frame.
 function ns.setDisplayHost(host)
@@ -2050,6 +2093,8 @@ SlashCmdList.DOESITDIE = function(msg)
     elseif cmd == "reset" then
         wipe(db.ticks)
         print("Learned tick sizes cleared.")
+    elseif cmd == "ticks" then
+        ns.toggleTickViewer()
     else
         print("The kill icon on the target's portrait means your DoTs will kill it.")
         print("/did - open the options window")
@@ -2058,6 +2103,7 @@ SlashCmdList.DOESITDIE = function(msg)
         print("/did plates - check what the addon can reach on visible nameplates (logged)")
         print("/did exec [percent] - test showing when the target is below 20% (or the given percent); again to stop")
         print("/did debug - toggle echoing the trace log (casts, ticks, estimates) to chat")
+        print("/did ticks - show learned tick sizes")
         print("/did reset - forget learned tick sizes")
     end
 end

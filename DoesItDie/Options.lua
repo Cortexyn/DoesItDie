@@ -453,9 +453,287 @@ local function actionRow(parent, labelText, buttonText, onClick, opts)
     local row = makeRow(parent, labelText, opts)
     local button = pushButton(row, buttonText, 90, onClick)
     button:SetPoint("LEFT", row, "LEFT", row.layout.label, 0)
+    row.button = button
     function row:Refresh() self:ApplyEnabled(button) end
     return row
 end
+
+---------------------------------------------------------------------------
+-- Learned tick sizes viewer (Advanced tab > View): one row per learned tick size, with the spell's icon, name
+-- and rank (hover for its tooltip, shift-click to link it), what its description predicts per tick, and the
+-- difference: the spell power or attack power the description leaves out.
+---------------------------------------------------------------------------
+
+local TICKS_ROW_HEIGHT, TICKS_VISIBLE_ROWS = 32, 11
+-- Column x positions and widths in a row; numbers are right-aligned in theirs.
+local TICKS_COLUMNS = {
+    spell = { 44, 212 }, combo = { 258, 48 }, learned = { 310, 66 }, tooltip = { 380, 66 }, bonus = { 450, 58 },
+    total = { 512, 70 },
+}
+local SPELL_LINK_COLOR = { 0.44, 0.84, 1 }
+local tickViewer
+
+local function formatTick(value)
+    if not value then return "-" end
+    if value == math.floor(value) then return string.format("%d", value) end
+    return string.format("%.1f", value)
+end
+
+local function spellCall(fnName, spellID)
+    local fn = C_Spell and C_Spell[fnName]
+    if not fn then return nil end
+    local ok, value = pcall(fn, spellID)
+    if ok and (type(value) == "string" or type(value) == "number") then return value end
+end
+
+local function spellLink(spellID)
+    local link = spellCall("GetSpellLink", spellID)
+    if not link and GetSpellLink then
+        local ok, value = pcall(GetSpellLink, spellID)
+        link = ok and value or nil
+    end
+    return link
+end
+
+local function showTickTooltip(row)
+    local entry = row.entry
+    if not entry then return end
+    GameTooltip:SetOwner(row, "ANCHOR_RIGHT")
+    local shown = GameTooltip.SetSpellByID and pcall(GameTooltip.SetSpellByID, GameTooltip, entry.spellID)
+    if not shown then GameTooltip:SetText(entry.name or ("Spell " .. entry.spellID), 1, 1, 1) end
+    GameTooltip:AddLine(" ")
+    GameTooltip:AddLine("DoesItDie", 1, 0.82, 0)
+    if entry.comboPoints then
+        GameTooltip:AddDoubleLine("Combo points", entry.comboPoints, 0.8, 0.8, 0.8, 1, 1, 1)
+    end
+    GameTooltip:AddDoubleLine("Learned per tick", formatTick(entry.perTick), 0.8, 0.8, 0.8, 1, 1, 1)
+    if entry.tooltipPerTick then
+        GameTooltip:AddDoubleLine("Tooltip per tick", formatTick(entry.tooltipPerTick), 0.8, 0.8, 0.8, 1, 1, 1)
+        GameTooltip:AddDoubleLine("Ticks", string.format("%d, every %gs (%gs)", entry.ticks, entry.interval,
+            entry.duration), 0.8, 0.8, 0.8, 1, 1, 1)
+        GameTooltip:AddDoubleLine("Full duration", formatTick(entry.perTick * entry.ticks), 0.8, 0.8, 0.8, 1, 1, 1)
+    end
+    GameTooltip:AddLine("Learned from this spell's ticks on your targets; used instead of the tooltip's number, "
+        .. "which leaves out spell power and attack power.", 0.6, 0.6, 0.6, true)
+    GameTooltip:AddLine("Shift-click to link it in chat.", 0.5, 0.8, 1)
+    GameTooltip:Show()
+end
+
+local function createTickRow(parent, index)
+    local row = CreateFrame("Button", nil, parent)
+    row:SetHeight(TICKS_ROW_HEIGHT)
+    row:RegisterForClicks("LeftButtonUp")
+    local stripe = row:CreateTexture(nil, "BACKGROUND")
+    stripe:SetAllPoints()
+    stripe:SetColorTexture(1, 1, 1, index % 2 == 0 and 0.035 or 0)
+    local highlight = row:CreateTexture(nil, "HIGHLIGHT")
+    highlight:SetAllPoints()
+    highlight:SetColorTexture(1, 1, 1, 0.08)
+    -- The spell's school color, as on the marker with "Color by school".
+    row.school = row:CreateTexture(nil, "ARTWORK")
+    row.school:SetSize(3, TICKS_ROW_HEIGHT - 8)
+    row.school:SetPoint("LEFT", 2, 0)
+    row.icon = row:CreateTexture(nil, "ARTWORK")
+    row.icon:SetSize(24, 24)
+    row.icon:SetPoint("LEFT", 12, 0)
+    row.icon:SetTexCoord(0.07, 0.93, 0.07, 0.93)
+
+    row.name = row:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+    row.name:SetPoint("TOPLEFT", row, "TOPLEFT", TICKS_COLUMNS.spell[1], -3)
+    row.name:SetWidth(TICKS_COLUMNS.spell[2])
+    row.name:SetJustifyH("LEFT")
+    row.name:SetWordWrap(false)
+    row.rank = row:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    row.rank:SetPoint("TOPLEFT", row.name, "BOTTOMLEFT", 0, -1)
+    row.rank:SetWidth(TICKS_COLUMNS.spell[2])
+    row.rank:SetJustifyH("LEFT")
+    row.cells = {}
+    for _, column in ipairs({ "combo", "learned", "tooltip", "bonus", "total" }) do
+        local cell = row:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+        cell:SetPoint("LEFT", row, "LEFT", TICKS_COLUMNS[column][1], 0)
+        cell:SetWidth(TICKS_COLUMNS[column][2])
+        cell:SetJustifyH(column == "combo" and "CENTER" or "RIGHT")
+        row.cells[column] = cell
+    end
+
+    local forget = CreateFrame("Button", nil, row)
+    forget:SetSize(20, 20)
+    forget:SetPoint("RIGHT", row, "RIGHT", -6, 0)
+    forget.text = forget:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    forget.text:SetPoint("CENTER")
+    forget.text:SetText("x")
+    forget.text:SetTextColor(0.6, 0.6, 0.6)
+    local forgetHighlight = forget:CreateTexture(nil, "HIGHLIGHT")
+    forgetHighlight:SetAllPoints()
+    forgetHighlight:SetColorTexture(1, 0.3, 0.3, 0.25)
+    forget:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:SetText("Forget this tick size", 1, 1, 1)
+        GameTooltip:AddLine("The next cast starts from the tooltip again and learns it anew.", nil, nil, nil, true)
+        GameTooltip:Show()
+    end)
+    forget:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    forget:SetScript("OnClick", function()
+        if not row.entry then return end
+        ns.forgetLearnedTick(row.entry.key)
+        tickViewer:Refresh()
+    end)
+
+    row:SetScript("OnEnter", showTickTooltip)
+    row:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    row:SetScript("OnClick", function(self)
+        if not (self.entry and IsShiftKeyDown and IsShiftKeyDown()) then return end
+        local link = spellLink(self.entry.spellID)
+        if link and not (ChatEdit_InsertLink and ChatEdit_InsertLink(link)) and ChatFrame_OpenChat then
+            ChatFrame_OpenChat(link)
+        end
+    end)
+    return row
+end
+
+local function fillTickRow(row, entry)
+    row.entry = entry
+    local color = entry.color or { 0.5, 0.5, 0.5 }
+    row.school:SetColorTexture(color[1], color[2], color[3], 1)
+    row.icon:SetTexture(spellCall("GetSpellTexture", entry.spellID) or "Interface\\Icons\\INV_Misc_QuestionMark")
+    row.name:SetText(entry.name or ("Spell " .. entry.spellID))
+    row.name:SetTextColor(SPELL_LINK_COLOR[1], SPELL_LINK_COLOR[2], SPELL_LINK_COLOR[3])
+    local rank = spellCall("GetSpellSubtext", entry.spellID)
+    row.rank:SetText(rank and rank ~= "" and rank or ("ID " .. entry.spellID))
+    row.cells.combo:SetText(entry.comboPoints or "")
+    row.cells.learned:SetText(formatTick(entry.perTick))
+    row.cells.tooltip:SetText(entry.tooltipPerTick and formatTick(entry.tooltipPerTick) or "-")
+    local bonus = entry.tooltipPerTick and entry.tooltipPerTick > 0
+        and math.floor((entry.perTick / entry.tooltipPerTick - 1) * 100 + 0.5)
+    if bonus then
+        row.cells.bonus:SetText(string.format("%+d%%", bonus))
+        if bonus > 0 then
+            row.cells.bonus:SetTextColor(0.4, 1, 0.4)
+        elseif bonus < 0 then
+            row.cells.bonus:SetTextColor(1, 0.45, 0.45)
+        else
+            row.cells.bonus:SetTextColor(0.7, 0.7, 0.7)
+        end
+    else
+        row.cells.bonus:SetText("-")
+        row.cells.bonus:SetTextColor(0.7, 0.7, 0.7)
+    end
+    row.cells.total:SetText(entry.ticks and formatTick(entry.perTick * entry.ticks) or "-")
+    row:Show()
+end
+
+local function createTickViewer()
+    local width = TICKS_COLUMNS.total[1] + TICKS_COLUMNS.total[2] + 56
+    local viewer = CreateFrame("Frame", "DoesItDieLearnedTicks", UIParent, "BackdropTemplate")
+    viewer:Hide()
+    viewer:SetSize(width, 112 + TICKS_VISIBLE_ROWS * TICKS_ROW_HEIGHT + 44)
+    viewer:SetFrameStrata("DIALOG")
+    viewer:SetToplevel(true)
+    viewer:SetClampedToScreen(true)
+    viewer:EnableMouse(true)
+    viewer:SetMovable(true)
+    viewer:RegisterForDrag("LeftButton")
+    viewer:SetScript("OnDragStart", viewer.StartMoving)
+    viewer:SetScript("OnDragStop", viewer.StopMovingOrSizing)
+    setBackdrop(viewer, 0.06, 0.97)
+    table.insert(UISpecialFrames, "DoesItDieLearnedTicks") -- Escape closes it
+
+    local title = viewer:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    title:SetPoint("TOPLEFT", 16, -16)
+    title:SetText("Learned tick sizes")
+    local close = CreateFrame("Button", nil, viewer, "UIPanelCloseButton")
+    close:SetPoint("TOPRIGHT", -6, -10)
+    local intro = viewer:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    intro:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -8)
+    intro:SetWidth(width - 32)
+    intro:SetJustifyH("LEFT")
+    intro:SetText("What each DoT really ticks for, learned from your casts and used instead of its tooltip. "
+        .. "Tooltips leave out spell power and attack power: Bonus is how much more yours do. "
+        .. "Hover a spell for details, shift-click to link it.")
+
+    local list = CreateFrame("Frame", nil, viewer, "BackdropTemplate")
+    list:SetPoint("TOPLEFT", 10, -100)
+    list:SetPoint("TOPRIGHT", -10, -100)
+    list:SetHeight(TICKS_VISIBLE_ROWS * TICKS_ROW_HEIGHT + 2)
+    setBackdrop(list, 0.09)
+    list:EnableMouseWheel(true)
+
+    local headers = { spell = "Spell", combo = "Combo", learned = "Per tick", tooltip = "Tooltip", bonus = "Bonus",
+        total = "Total" }
+    for column, text in pairs(headers) do
+        local header = viewer:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        header:SetPoint("BOTTOMLEFT", list, "TOPLEFT", TICKS_COLUMNS[column][1], 4)
+        header:SetWidth(TICKS_COLUMNS[column][2])
+        header:SetJustifyH(column == "spell" and "LEFT" or column == "combo" and "CENTER" or "RIGHT")
+        header:SetText(text)
+    end
+
+    viewer.rows = {}
+    for i = 1, TICKS_VISIBLE_ROWS do
+        viewer.rows[i] = createTickRow(list, i)
+        viewer.rows[i]:SetPoint("TOPLEFT", list, "TOPLEFT", 1, -1 - (i - 1) * TICKS_ROW_HEIGHT)
+        viewer.rows[i]:SetPoint("RIGHT", list, "RIGHT", -1, 0)
+    end
+    local empty = list:CreateFontString(nil, "OVERLAY", "GameFontDisable")
+    empty:SetPoint("CENTER")
+    empty:SetWidth(width - 80)
+    empty:SetText("Nothing learned yet. Tick sizes are learned as your DoTs tick on your targets.")
+
+    local count = viewer:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    count:SetPoint("BOTTOMLEFT", 16, 18)
+    local forgetAll = pushButton(viewer, "Forget all", 100, function()
+        ns.resetLearnedTicks()
+        viewer:Refresh()
+    end)
+    forgetAll:SetPoint("BOTTOMRIGHT", -12, 12)
+
+    viewer.offset = 0
+    function viewer:Refresh()
+        local entries = ns.learnedTickList()
+        local maxOffset = math.max(0, #entries - TICKS_VISIBLE_ROWS)
+        self.offset = math.max(0, math.min(self.offset, maxOffset))
+        for i, row in ipairs(self.rows) do
+            local entry = entries[self.offset + i]
+            if entry then fillTickRow(row, entry) else row.entry = nil; row:Hide() end
+        end
+        empty:SetShown(#entries == 0)
+        local scrolled = maxOffset > 0 and string.format("  (%d-%d shown; scroll for more)", self.offset + 1,
+            math.min(#entries, self.offset + TICKS_VISIBLE_ROWS)) or ""
+        count:SetText(string.format("%d learned tick size%s%s", #entries, #entries == 1 and "" or "s", scrolled))
+        forgetAll:SetEnabled(#entries > 0)
+    end
+    list:SetScript("OnMouseWheel", function(_, delta)
+        viewer.offset = viewer.offset - delta
+        viewer:Refresh()
+    end)
+    -- New ticks are learned while it's open (in combat): keep it current.
+    local sinceRefresh = 0
+    viewer:SetScript("OnUpdate", function(self, elapsed)
+        sinceRefresh = sinceRefresh + elapsed
+        if sinceRefresh < 1 then return end
+        sinceRefresh = 0
+        self:Refresh()
+    end)
+    viewer:SetScript("OnShow", function(self)
+        sinceRefresh = 0
+        self:Refresh()
+    end)
+    return viewer
+end
+
+local function toggleTickViewer()
+    if not ns.db then return end
+    if not tickViewer then tickViewer = createTickViewer() end
+    if tickViewer:IsShown() then return tickViewer:Hide() end
+    tickViewer:ClearAllPoints()
+    if window and window:IsShown() then
+        tickViewer:SetPoint("CENTER", window, "CENTER", 0, 0)
+    else
+        tickViewer:SetPoint("CENTER")
+    end
+    tickViewer:Show()
+end
+ns.toggleTickViewer = toggleTickViewer
 
 ---------------------------------------------------------------------------
 -- Tabs
@@ -644,8 +922,13 @@ local function buildTabs()
         .. "failed cast removes it." })
     advanced:checkbox("debug", "Echo trace log to chat",
         { tooltip = "Prints each DoT cast, matched tick and estimate to chat." })
-    advanced:action("Learned tick sizes", "Reset", function() ns.resetLearnedTicks() end,
-        { tooltip = "Forget the tick sizes learned from earlier casts." })
+    local learned = advanced:action("Learned tick sizes", "View", toggleTickViewer, { tooltip = "What each of your "
+        .. "DoTs really ticks for, learned from earlier casts, next to what its tooltip says. Reset forgets them all." })
+    local resetLearned = pushButton(learned, "Reset", 90, function()
+        ns.resetLearnedTicks()
+        if tickViewer and tickViewer:IsShown() then tickViewer:Refresh() end
+    end)
+    resetLearned:SetPoint("LEFT", learned.button, "RIGHT", 6, 0)
     -- Custom target frame (Frames.lua), for unit frame addons that replace Blizzard's.
     advanced:gap()
     advanced:gap()

@@ -668,5 +668,66 @@ lua.execute("EllesmereUIUnitFrames_Target = nil")
 step("clear it, with EllesmereUI's target frame off", type_and_update(""))
 check("  back to Blizzard's", ns.attachStatus()[0], "Blizzard's target frame")
 
+
+# Learned tick sizes viewer (Advanced > View, /did ticks).
+def learn_some_ticks():
+    ticks = ns.db.ticks
+    lua.execute("wipe(DoesItDieDB.ticks)")
+    ticks[172] = 12       # Corruption: tooltip 40 over 12s = 10 per tick
+    ticks[348] = 4.4      # Immolate: tooltip 20 over 15s = 4 per tick
+    ticks["1079x3"] = 22  # a 3-point finisher the client has no description for here
+
+
+step("learn three tick sizes", learn_some_ticks)
+step("/did ticks opens the viewer", lambda: G.SlashCmdList.DOESITDIE("ticks"))
+viewer = G.DoesItDieLearnedTicks
+check("  shown", viewer.shown if viewer else None, True)
+rows = viewer.rows
+
+
+def cells(i):
+    row = rows[i]
+    return [row.name.text, row.cells.combo.text, row.cells.learned.text, row.cells.tooltip.text,
+            row.cells.bonus.text, row.cells.total.text]
+
+
+check("  Corruption: 12 learned, tooltip 10, +20%, 48 in all", cells(1), ["Corruption", "", "12", "10", "+20%", "48"])
+check("  Immolate: decimals kept", cells(2), ["Immolate", "", "4.4", "4", "+10%", "22"])
+check("  finisher: its combo points, no tooltip numbers", cells(3), ["Spell", 3, "22", "-", "-", "-"])
+check("  no fourth row", rows[4].shown, False)
+def viewer_count():
+    for child in viewer.children.values():
+        if child.kind == "fontstring" and "learned tick size" in str(child.text or ""):
+            return child.text
+
+
+check("  count", viewer_count(), "3 learned tick sizes")
+step("hover a row (spell tooltip plus learned numbers)", lambda: rows[1].scripts.OnEnter(rows[1]))
+lua.execute('linked = nil; function IsShiftKeyDown() return true end; '
+            'function ChatEdit_InsertLink(l) linked = l; return true end; '
+            'C_Spell.GetSpellLink = function(id) return "[link " .. id .. "]" end')
+step("shift-click Corruption", lambda: rows[1].scripts.OnClick(rows[1]))
+check("  linked in chat", G.linked, "[link 172]")
+
+
+def forget_first_row():
+    for child in rows[1].children.values():
+        if child.kind == "Button":
+            child.scripts.OnClick(child)
+            return
+    raise AssertionError("no forget button")
+
+
+step("forget Corruption's tick size", forget_first_row)
+check("  gone from the saved data", ns.db.ticks[172], None)
+check("  Immolate moves up", rows[1].name.text, "Immolate")
+step("Forget all", lambda: H.clickText("Forget all"))
+check("  saved data empty", len(list(ns.db.ticks.keys())), 0)
+check("  no rows", rows[1].shown, False)
+step("/did ticks again closes it", lambda: G.SlashCmdList.DOESITDIE("ticks"))
+check("  hidden", viewer.shown, False)
+step("Advanced tab's View button opens it", lambda: H.clickText("View"))
+check("  shown", viewer.shown, True)
+
 print(f"\n{'all passed' if not failures else str(failures) + ' FAILED'}")
 sys.exit(1 if failures else 0)
