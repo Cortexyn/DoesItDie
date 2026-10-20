@@ -49,7 +49,8 @@ Consequences for the design:
 
 | Path | What |
 |---|---|
-| `DoesItDie/DoesItDie.lua` | The addon, in sections: constants and tables, helpers, description parsing, DoT tracking (combo points, cast outcomes, tick matching), display, settings and what `Options.lua` needs (`ns.*`), events, slash commands |
+| `DoesItDie/DoesItDie.lua` | The addon's core, in sections: constants and tables, helpers, description parsing, DoT tracking (combo points, cast outcomes, tick matching), settings and what `Options.lua` needs (`ns.*`), events, slash commands. Reaches the display through `ns.display`, `ns.refresh`, `ns.playFlash` (runtime only: it loads first) and hands it the tracking through `ns.tracking` |
+| `DoesItDie/Display.lua` | The target frame display: the marker on the health bar, the kill icon on the portrait, their look lists, animations, layering, attaching to Blizzard's, a custom or the options preview's frame, and `refresh`. Loaded right after `DoesItDie.lua`; gets `db` on ADDON_LOADED (`ns.display.setDb`) |
 | `DoesItDie/Options.lua` | The options window: live preview with a mock target frame, tabs, presets, hand-built controls; the learned tick sizes viewer (Advanced > View, `/did ticks`: per spell its icon, rank, learned vs tooltip tick, hover tooltip, shift-click link, forget); plus a small page in Options > AddOns that opens it. Shares data with `DoesItDie.lua` through the addon namespace (`local _, ns = ...`) |
 | `DoesItDie/Frames.lua` | Custom target frame (options' Advanced tab): attach the marker and kill icon to another addon's target frame instead of Blizzard's (which unit frame replacements hide). Settings hold frame paths (`GlobalName.key.key`); a Pick mode highlights and takes the frame under the mouse. The marker only needs the bar's rectangle, so the bar must fill left to right and be exactly the fill area. With the setting empty (or its path not found), a known replacement target frame is used before Blizzard's: EllesmereUI's (`EllesmereUIUnitFrames_Target.Health`, which only exists while EllesmereUI draws the target frame; `ns.knownTargetFrame`), with the kill icon on its `.Portrait` when that's shown (EllesmereUI hides the portrait's backdrop when portraits are off), else on the bar. When the attached frame (custom or Blizzard's) isn't visible, the display hides. Typed EllesmereUI path verified in-game by users |
 | `DoesItDie/Nameplates.lua` | The marker and a small kill icon on every enemy nameplate with your DoTs (per-plate widgets parented to Blizzard's recycled plate frames, fed via `ns.dotBreakdownForUnit`; with EllesmereUI's nameplates, parented to its own pooled plate frame instead, found in `EllesmereNameplates_NS.plates[unit]`, in its health bar's strata since it flattens the plate's render layers; verified in-game; with Platynator's, anchored to its health widget's bar (its displays are found by scanning UIParent's and the plate's children, throttled) and re-anchored when Platynator reassigns a display, in that bar's strata), with their own look settings (`plate*`, since enemy plates are red) and a mock plate in the options preview; plus the `/did plates` probe. Probe verified plates are reachable and anchorable in the open world, in and out of combat; dungeons are untested |
@@ -62,7 +63,7 @@ Consequences for the design:
 | `tools/test_parse.py` | Runs the addon's real description parser (in Lua, via `lupa`) on hand-written tooltips |
 | `tools/test_spellbook.py` | Runs every scraped Forever damage tooltip through the parser and compares with a reviewed snapshot (`tools/data/spellbook_expected.json`) |
 | `tools/test_tracking.py` | Plays scripted fights through the real tracking code with game APIs stubbed: tick matching, dodges/misses, recasts, combo points, first-tick waiting. Includes replays of real in-game logs |
-| `tools/test_display.py` | Loads the real display code with mocked frames and checks the per-DoT segments (running totals, colors, dividers, text breakdown) |
+| `tools/test_display.py` | Loads the real display code (`Display.lua`) with mocked frames and checks the per-DoT segments (running totals, colors, dividers, text breakdown) |
 | `tools/test_load.py` | Smoke test: loads every file in the .toc with a fake WoW environment and drives it like a player (load, `/did`, tabs, presets, controls, Simulate fight, close). Catches runtime errors, not visual ones |
 | `tools/test_locale.py` | Runs `tools/test_locale.lua`: every English and German tooltip in `tools/data/locale_cases.lua` through the real parser, English checked against the v0.5.0 parser (`tools/data/upstream_parser_v0.5.0.lua`), plus the language registry |
 | `tools/test_locale_fr_es.py` | French (Forever's own tooltips) and Spanish tooltips through the real parser and name tables, English patterns first as in game |
@@ -120,10 +121,10 @@ Tuning constants (tick windows, tolerances, fallbacks) are at the top of `DoesIt
     `"Interface\\Buttons\\WHITE8X8"`. Edit Lua with file tools, and grep `Interface` after scripted edits.
   - Guard every value that might be secret with `isSecret()` before comparing or indexing with it.
   - Bump `DB_VERSION` when learned tick data from older versions would be wrong.
-  - Lua allows 200 locals per function scope, including a file's top level. `DoesItDie.lua` uses 196, so new
-    features with many top-level locals belong in a new file (added to the .toc) sharing `ns`, and setup-only
-    locals go in `do ... end` blocks (as in the Display section). `test_load.py` runs Lua 5.1 (`lupa.lua51`),
-    so going over fails it.
+  - Lua allows 200 locals per function scope, including a file's top level. `DoesItDie.lua` uses 98 and
+    `Display.lua` 104; features with many top-level locals still belong in a new file (added to the .toc) sharing
+    `ns`, and setup-only locals go in `do ... end` blocks (as in `Display.lua`). `test_load.py` runs Lua 5.1
+    (`lupa.lua51`), so going over fails it.
 
 ## Status
 

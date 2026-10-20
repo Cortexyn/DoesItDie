@@ -370,7 +370,18 @@ step("Reset learned tick sizes", lambda: H.clickText("Reset"))
 step("close the window", lambda: G.DoesItDieOptions.Hide(G.DoesItDieOptions))
 check("window hidden", G.DoesItDieOptions.shown, False)
 step("display loop back on the (absent) target", lambda: H.update(0.2))
+def chat_text():
+    return "\n".join(str(line) for line in G.chat.values())
+
+
 step("/did help", lambda: G.SlashCmdList.DOESITDIE("help"))
+step("/did skull", lambda: (G.SlashCmdList.DOESITDIE("skull"), H.update(0.2)))
+step("/did line (markers off)", lambda: G.SlashCmdList.DOESITDIE("line"))
+check("  markers off", G.DoesItDieDB.showMarkers, False)
+step("/did line (markers on)", lambda: G.SlashCmdList.DOESITDIE("line"))
+check("  markers on; no target frame in this fake UI, so it says so",
+      chat_text().splitlines()[-1].endswith("health bar markers unavailable."), True)
+step("/did debug twice", lambda: (G.SlashCmdList.DOESITDIE("debug"), G.SlashCmdList.DOESITDIE("debug")))
 step("/did plates", lambda: G.SlashCmdList.DOESITDIE("plates"))
 plate_lines = [line for line in G.DoesItDieDB.log.values() if "PLATES" in line]
 check("  probe logged the fake nameplate", any("nameplate1" in line and "healthBar=UnitFrame.healthBar" in line

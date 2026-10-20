@@ -1,4 +1,4 @@
-"""Loads DoesItDie's real Display section with mocked frames (they record what they're set to) and checks
+"""Loads DoesItDie's real display code (Display.lua) with mocked frames (they record what they're set to) and checks
 the per-DoT segment logic: running totals, visibility, dividers, colors and the text breakdown.
 
     pip install lupa
@@ -9,7 +9,7 @@ import sys
 
 from lupa.lua51 import LuaRuntime  # WoW runs Lua 5.1
 
-src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "DoesItDie", "DoesItDie.lua"),
+src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "DoesItDie", "Display.lua"),
            encoding="utf-8").read()
 
 
@@ -51,7 +51,7 @@ local function isSecret() return false end
 local function trace() end
 """
 
-HARNESS = MOCKS + chunk("local SCHOOL_MASKS", "local MAX_TRACE_LINES") + chunk(
+HARNESS = MOCKS + chunk(
     "---------------------------------------------------------------------------\n-- Display",
     "local function playFlash") + """
 return {

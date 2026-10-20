@@ -63,7 +63,7 @@ local SPELLS = {
 }
 local function spellNameAndDescription(id) return SPELLS[id][1], SPELLS[id][2] end
 """ + chunk("local UPDATE_INTERVAL", "-- User options") + chunk(
-    "local function schoolFromWords", "---------------------------------------------------------------------------\n-- Display") + """
+    "local function schoolFromWords", "---------------------------------------------------------------------------\n-- Settings") + """
 local api = {}
 function api.reset(waitMode, estimateDuringCast)
     for k in pairs(dotsByTarget) do dotsByTarget[k] = nil end

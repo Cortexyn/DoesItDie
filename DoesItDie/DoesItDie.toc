@@ -12,6 +12,7 @@ Locale_deDE.lua
 Locale_esES.lua
 Locale_frFR.lua
 DoesItDie.lua
+Display.lua
 Frames.lua
 Options.lua
 Nameplates.lua
