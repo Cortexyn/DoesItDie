@@ -548,7 +548,7 @@ local function buildTabs()
     icon:checkbox("showSkull", "Show icon on portrait",
         { tooltip = "Shows an icon over the target's portrait when your DoTs on it will kill it." })
     icon:choice("skullIcon", "Icon", lists.icons)
-    icon:slider("skullSize", "Size", 20, 64, 2)
+    icon:slider("skullSize", "Size", 20, 128, 2)
     icon:checkbox("skullPulse", "Pulse", { tooltip = "Gently pulses the icon while it's showing." })
     -- Wide ranges: with a custom target frame (Advanced) the icon may be centered on a long health bar.
     icon:slider("skullOffsetX", "Horizontal offset", -150, 150, 1,

@@ -1028,7 +1028,7 @@ local skullTestUntil -- /did skull forces the skull visible until this time
 -- max = current health, value = remaining DoT damage; the fill only reaches the bar's right end when
 -- damage >= health. The skull rides the fill's right edge, and only the last skull-width of the very
 -- long bar is visible (clipped), so the skull appears over the portrait only when lethal.
--- It starts sliding in at skullSize / SKULL_BAR_LENGTH (~0.4%) short of lethal.
+-- It starts sliding in at skullSize / SKULL_BAR_LENGTH short of lethal (0.2% at 20px, 1.3% at 128px).
 local SKULL_BAR_LENGTH = 10000
 
 local skullWindow = CreateFrame("Frame", "DoesItDieSkull", UIParent)
