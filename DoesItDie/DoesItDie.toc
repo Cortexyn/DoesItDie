@@ -9,6 +9,8 @@
 
 Locale.lua
 Locale_deDE.lua
+Locale_esES.lua
+Locale_frFR.lua
 DoesItDie.lua
 Frames.lua
 Options.lua

@@ -124,14 +124,14 @@ for _, case in ipairs(cases) do
     end
 end
 
--- Names the client reports for the spell IDs (here: made-up French ones) join the tables too, and never replace
--- an entry that is already there.
+-- Names the client reports for the spell IDs (here: made-up Italian ones, a language with no file) join the tables
+-- too, and never replace an entry that is already there.
 if addon.nameTables then
-    local french = { [5570] = "Essaim d'insectes", [980] = "Malédiction d'agonie", [1943] = "Rupture", [10] = "Blizzard" }
-    local added = ns.locale.addClientNames(addon.nameTables, function(id) return french[id] end)
+    local italian = { [5570] = "Sciame di insetti", [980] = "Maledizione dell'agonia", [1943] = "Rupture", [10] = "Blizzard" }
+    local added = ns.locale.addClientNames(addon.nameTables, function(id) return italian[id] end)
     local case = { lang = "en", source = "stub", name = "client names", id = 0 }
-    check(case, "Essaim d'insectes interval", addon.intervals["Essaim d'insectes"], 2)
-    check(case, "Malédiction d'agonie shape", addon.shapes["Malédiction d'agonie"] ~= nil, true)
+    check(case, "Sciame di insetti interval", addon.intervals["Sciame di insetti"], 2)
+    check(case, "Maledizione dell'agonia shape", addon.shapes["Maledizione dell'agonia"] ~= nil, true)
     check(case, "names added", #added, 2)
 else
     failed, failedByLang.de = failed + 1, failedByLang.de + 1

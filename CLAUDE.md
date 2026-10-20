@@ -54,6 +54,8 @@ Consequences for the design:
 | `DoesItDie/Frames.lua` | Custom target frame (options' Advanced tab): attach the marker and kill icon to another addon's target frame instead of Blizzard's (which unit frame replacements hide). Settings hold frame paths (`GlobalName.key.key`); a Pick mode highlights and takes the frame under the mouse. The marker only needs the bar's rectangle, so the bar must fill left to right and be exactly the fill area. With the setting empty (or its path not found), a known replacement target frame is used before Blizzard's: EllesmereUI's (`EllesmereUIUnitFrames_Target.Health`, which only exists while EllesmereUI draws the target frame; `ns.knownTargetFrame`), with the kill icon on its `.Portrait` when that's shown (EllesmereUI hides the portrait's backdrop when portraits are off), else on the bar. When the attached frame (custom or Blizzard's) isn't visible, the display hides. Typed EllesmereUI path verified in-game by users |
 | `DoesItDie/Nameplates.lua` | The marker and a small kill icon on every enemy nameplate with your DoTs (per-plate widgets parented to Blizzard's recycled plate frames, fed via `ns.dotBreakdownForUnit`; with EllesmereUI's nameplates, parented to its own pooled plate frame instead, found in `EllesmereNameplates_NS.plates[unit]`, in its health bar's strata since it flattens the plate's render layers; verified in-game; with Platynator's, anchored to its health widget's bar (its displays are found by scanning UIParent's and the plate's children, throttled) and re-anchored when Platynator reassigns a display, in that bar's strata), with their own look settings (`plate*`, since enemy plates are red) and a mock plate in the options preview; plus the `/did plates` probe. Probe verified plates are reachable and anchorable in the open world, in and out of combat; dungeons are untested |
 | `DoesItDie/Execute.lua` | Execute range: a general "target is below 20%" indicator for every class (no class-specific logic, by design). For now only the `/did exec [percent]` probe, comparing two ways to show it: A, geometry (an icon at the threshold's spot on a long health-fed bar, clipped to the bar's empty part) and B, `UnitHealthPercent` with a step color curve, if Forever has it. Unverified in-game |
+| `DoesItDie/Locale.lua` | Other client languages: a registry (`ns.locale.register`) that each language file joins with its own description patterns (`parseDot`, `isFinisher`, `comboPointsAwarded`) and English name -> local names for the name-keyed tables (`NAME_TABLES` in `DoesItDie.lua`). English patterns always run first, unchanged; descriptions they don't read go to every language in turn, whatever `GetLocale()` says (one language's patterns can't match another's text). At load the tables also get the names the client reports for known spell IDs (`L.SPELL_IDS`), in any language. Unread non-English descriptions are logged once per spell (`NOT READ`) |
+| `DoesItDie/Locale_deDE.lua`, `Locale_esES.lua`, `Locale_frFR.lua` | German (PR #2), Spanish (ported from PR #6) and French (ported from PR #11). German is Classic Era wording; Spanish and French are Forever's (Wowhead). None verified on a non-English client yet. The options window itself is English only |
 | `DoesItDie/Textures/` | Generated TGAs: patterns (dashes, stripes, spark, shine) and the sunglasses icon |
 | `tools/make_textures.py` | Regenerates the textures |
 | `tools/scrape_forever_spellbook.py` | Scrapes all nine class spellbooks from foreverchanges.pro into `tools/data/forever_spellbook.json` |
@@ -62,6 +64,8 @@ Consequences for the design:
 | `tools/test_tracking.py` | Plays scripted fights through the real tracking code with game APIs stubbed: tick matching, dodges/misses, recasts, combo points, first-tick waiting. Includes replays of real in-game logs |
 | `tools/test_display.py` | Loads the real display code with mocked frames and checks the per-DoT segments (running totals, colors, dividers, text breakdown) |
 | `tools/test_load.py` | Smoke test: loads every file in the .toc with a fake WoW environment and drives it like a player (load, `/did`, tabs, presets, controls, Simulate fight, close). Catches runtime errors, not visual ones |
+| `tools/test_locale.py` | Runs `tools/test_locale.lua`: every English and German tooltip in `tools/data/locale_cases.lua` through the real parser, English checked against the v0.5.0 parser (`tools/data/upstream_parser_v0.5.0.lua`), plus the language registry |
+| `tools/test_locale_fr_es.py` | French (Forever's own tooltips) and Spanish tooltips through the real parser and name tables, English patterns first as in game |
 | `WillItDieProbe/` | The original diagnostic addon that established the restrictions above. Not linked into the game any more |
 
 ## How the tracking works (high level)
@@ -100,7 +104,7 @@ Tuning constants (tick windows, tolerances, fallbacks) are at the top of `DoesIt
 - **Slash commands:** `/did` (options window), `/did skull` (5-second kill icon test with geometry logged), `/did line`,
   `/did debug`, `/did reset` (forget learned tick sizes), `/did plates` (nameplate probe, logged), `/did exec [percent]`
   (execute range probe, logged; again to stop).
-- **Tests:** `pip install lupa`, then run the five `tools/test_*.py` scripts (use `--update` on
+- **Tests:** `pip install lupa`, then run the seven `tools/test_*.py` scripts (use `--update` on
   `test_spellbook.py` only after reviewing a change). There's no Lua install; `luaparser` (pip) works as a
   syntax check.
 - **Gotchas:**
@@ -109,8 +113,10 @@ Tuning constants (tick windows, tolerances, fallbacks) are at the top of `DoesIt
     `"Interface\\Buttons\\WHITE8X8"`. Edit Lua with file tools, and grep `Interface` after scripted edits.
   - Guard every value that might be secret with `isSecret()` before comparing or indexing with it.
   - Bump `DB_VERSION` when learned tick data from older versions would be wrong.
-  - Lua allows 200 locals per function scope, including a file's top level. `DoesItDie.lua` is around 186,
-    so new features with many top-level locals belong in a new file (added to the .toc) sharing `ns`.
+  - Lua allows 200 locals per function scope, including a file's top level. `DoesItDie.lua` uses 192, so new
+    features with many top-level locals belong in a new file (added to the .toc) sharing `ns`, and setup-only
+    locals go in `do ... end` blocks (as in the Display section). `test_load.py` runs Lua 5.1 (`lupa.lua51`),
+    so going over fails it.
 
 ## Status
 
