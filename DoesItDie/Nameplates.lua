@@ -348,8 +348,10 @@ local function widgetsFor(host, healthBar, pooledHost, matchStrata)
     return w
 end
 
--- Hosts drawn this update; refreshPlates hides the widgets of every other one.
+-- Hosts drawn this update; refreshPlates hides the widgets of every other one, except pinned hosts: those
+-- another file draws on with these widgets (Focus.lua), which shows and hides them itself.
 local seenHosts = {}
+local pinnedHosts = {}
 
 -- A dead mob keeps its plate for a moment, and its DoTs stay tracked until they expire.
 local function unitIsDead(unit)
@@ -414,9 +416,18 @@ local function refreshPlates()
         end
     end
     for host, w in pairs(widgetsByHost) do
-        if not seenHosts[host] then hideWidgets(w) end
+        if not seenHosts[host] and not pinnedHosts[host] then hideWidgets(w) end
     end
 end
+
+-- The same marker and kill icon on another health bar (Focus.lua). Widgets live on `host`, made once and
+-- re-anchored when the bar changes; draw takes the breakdown, max health and health (secret or plain).
+ns.barMarker = {
+    pin = function(host) pinnedHosts[host] = true end,
+    widgetsFor = widgetsFor,
+    draw = drawPlate,
+    hide = hideWidgets,
+}
 
 local driver = CreateFrame("Frame")
 local sinceUpdate = 0

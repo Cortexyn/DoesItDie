@@ -41,6 +41,9 @@ function GetTime() return now end
 local targetKey, plates = "mob", {}
 local function unitKey(unit) if unit == "target" then return targetKey end return plates[unit] end
 function UnitExists(unit) return unitKey(unit) ~= nil end
+-- A unit's name is its mob key, unless given one (two mobs with the same name).
+local names = {}
+function UnitName(unit) return names[unit] or unitKey(unit) end
 local castCount = 0
 local SPELLS = {
     [1] = { "Corruption", "Corrupts the target, causing 40 Shadow damage over 12 sec." },
@@ -74,15 +77,16 @@ function api.reset(waitMode, estimateDuringCast)
     db.estimateDuringCast = estimateDuringCast ~= false
     if dropCastInProgress then dropCastInProgress("reset") end
     resetComboCount()
-    targetKey, plates = "mob", {}
+    targetKey, plates, names = "mob", {}, {}
     log = {}
 end
 function api.learn(spellID, perTick) db.ticks[spellID] = perTick end
 function api.learned(spellID) return db.ticks[spellID] end
--- Pressing the button (UNIT_SPELLCAST_SENT) and the server confirming it (UNIT_SPELLCAST_SUCCEEDED).
-function api.send(spellID, guid)
+-- Pressing the button (UNIT_SPELLCAST_SENT, which names the cast's target) and the server confirming it
+-- (UNIT_SPELLCAST_SUCCEEDED).
+function api.send(spellID, guid, targetName)
     if not guid then castCount = castCount + 1; guid = "cast-" .. castCount end
-    onCastSent(spellID, guid); return guid
+    onCastSent(spellID, guid, targetName); return guid
 end
 function api.succeed(spellID, guid)
     if onCastSucceeded then onCastSucceeded(guid, spellID) end
@@ -91,7 +95,11 @@ end
 function api.cast(spellID) return api.succeed(spellID, api.send(spellID)) end
 -- A cast with a cast time, event by event as the addon's handler runs them (SENT comes before START). The
 -- handlers are looked up by name, so without the feature these do nothing (and the checks fail instead of erroring).
-function api.start(spellID, guid) api.send(spellID, guid); if onCastStart then onCastStart(guid, spellID) end end
+function api.start(spellID, guid, targetName)
+    api.send(spellID, guid, targetName)
+    if onCastStart then onCastStart(guid, spellID) end
+end
+function api.name(unit, name) names[unit] = name end
 function api.ended(event, spellID, guid) if onCastEnded then onCastEnded(event, guid, spellID) end end
 function api.targetChanged() if dropCastInProgress then dropCastInProgress("target changed") end end
 function api.target(key) targetKey = key; resetComboCount() end
@@ -319,6 +327,24 @@ check("  never ticks at all: still dropped", "DROP Serpent Sting" in sim.log(), 
 
 sim.reset(); sim.learn(1, 10); sim.cast(1); sim.advance(3.8); sim.hit(10, 32)
 check("Corruption (no travel): a tick 0.8s late still doesn't count", "TICK Corruption" in sim.log(), False)
+
+# Focus casts (issue #12): UNIT_SPELLCAST_SENT names the cast's target, so a /cast [@focus] macro's DoT goes on
+# the focus when that name is the focus's and not the target's.
+sim.reset(); sim.target("A"); sim.plate("focus", "B"); sim.succeed(6, sim.send(6, None, "B"))
+check("[@focus] Agony: on the focus", sim.markerOn("B"), "72 dmg")
+check("  not on the target", sim.marker(), "0 dmg from 0 DoT(s)")
+sim.reset(); sim.target("A"); sim.plate("focus", "B"); sim.succeed(6, sim.send(6, None, "A"))
+check("Agony cast at the target, with a focus: on the target", sim.marker(), "72 dmg from 1 DoT(s)")
+sim.reset(); sim.target("A"); sim.plate("focus", "B"); sim.name("target", "Boar"); sim.name("focus", "Boar")
+sim.succeed(6, sim.send(6, None, "Boar"))
+check("Same-named target and focus: on the target, as before", sim.marker(), "72 dmg from 1 DoT(s)")
+sim.reset(); sim.target("A"); sim.name("focus", "B"); sim.succeed(6, sim.send(6, None, "B"))
+check("Focus whose GUID is secret: skipped, not put on the target", sim.marker(), "0 dmg from 0 DoT(s)")
+sim.reset(); sim.learn(8, 4); sim.target("A"); sim.plate("focus", "B"); sim.start(8, "cast-1", "B")
+check("[@focus] Immolate while casting: estimated on the focus", sim.markerOn("B"), "20 dmg")
+check("  not on the target", sim.marker(), "0 dmg from 0 DoT(s)")
+sim.succeed(8, "cast-1")
+check("  lands on the focus", sim.markerOn("B"), "20 dmg")
 
 # Player feedback: tab-dotting. An instant DoT's cast event comes a round trip after the button press; a player
 # who tabs straight away has a new target by then.

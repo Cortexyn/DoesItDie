@@ -130,6 +130,9 @@ local DEFAULTS = {
     -- a known replacement target frame (EllesmereUI's) if there is one, else Blizzard's.
     customHealthBar = "",
     customIconAnchor = "",
+    -- Focus frame (Focus.lua): the marker on it too, on a custom bar or the one found
+    showOnFocus = true,
+    customFocusHealthBar = "",
     -- Accuracy
     waitFirstTick = "off",
     estimateDuringCast = true,
@@ -378,12 +381,29 @@ local function isFinisherDescription(desc)
         and (desc:find("Finishing move") ~= nil or ns.locale.isFinisher(desc))
 end
 
-local function onCastSent(spellID, castGUID)
+-- The mob a cast is going to. UNIT_SPELLCAST_SENT only names it, so a cast whose name matches the focus but not
+-- the target (a /cast [@focus] macro) goes on the focus. A same-named target and focus can't be told apart: the
+-- target, as before. A focus whose GUID is secret can't be tracked, so that cast is skipped (false), not put on the
+-- target. From toughnuts99's patch (issue #12).
+local function sentTargetKey(targetName)
+    local targetKey = unitKey("target")
+    if type(targetName) ~= "string" or isSecret(targetName) or targetName == "" then return targetKey end
+    local function nameOf(unit)
+        local ok, name = pcall(UnitName, unit)
+        if ok and type(name) == "string" and not isSecret(name) then return name end
+    end
+    if nameOf("target") == targetName or nameOf("focus") ~= targetName then return targetKey end
+    return unitKey("focus") or false
+end
+
+local function onCastSent(spellID, castGUID, targetName)
     local now = GetTime()
     for guid, sent in pairs(sentTargets) do
         if now - sent.at > SENT_TARGET_SECONDS then sentTargets[guid] = nil end
     end
-    if castGUID and not isSecret(castGUID) then sentTargets[castGUID] = { key = unitKey("target"), at = now } end
+    if castGUID and not isSecret(castGUID) then
+        sentTargets[castGUID] = { key = sentTargetKey(targetName), at = now }
+    end
     local ok, _, desc = pcall(spellNameAndDescription, spellID)
     if not ok or not isFinisherDescription(desc) then return end
     local points, readings = readComboPoints()
@@ -638,7 +658,10 @@ local function onCastStart(castGUID, spellID)
     if not ok or not name or isSecret(name) or IGNORED_SPELLS[name] or isFinisherDescription(desc) then return end
     local total, school, duration, statedInterval = parseDot(desc, 1)
     if not total then return end
-    local key = unitKey("target")
+    -- The mob it was sent at (a [@focus] macro's focus), else the target. Kept for the cast's success.
+    local sent = castGUID and not isSecret(castGUID) and sentTargets[castGUID]
+    local key
+    if sent then key = sent.key else key = unitKey("target") end
     if not key then return end
     local now = GetTime()
     local dot = newDot(spellID, spellID, name, total, school, duration, statedInterval, now)
@@ -1104,8 +1127,8 @@ frame:SetScript("OnEvent", function(self, event, ...)
         ns.refresh()
 
     elseif event == "UNIT_SPELLCAST_SENT" then
-        local _, _, castGUID, spellID = ...
-        onCastSent(spellID, castGUID)
+        local _, targetName, castGUID, spellID = ...
+        onCastSent(spellID, castGUID, targetName)
 
     elseif event == "UNIT_POWER_FREQUENT" then
         local _, powerType = ...

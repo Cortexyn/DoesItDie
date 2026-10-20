@@ -178,6 +178,14 @@ function H.update(elapsed)
         if f.scripts.OnUpdate then f.scripts.OnUpdate(f, elapsed) end
     end
 end
+-- The same in reverse order: WoW doesn't promise an order between frames' OnUpdate scripts.
+function H.updateReversed(elapsed)
+    now = now + elapsed
+    for i = #frames, 1, -1 do
+        local f = frames[i]
+        if f.scripts.OnUpdate then f.scripts.OnUpdate(f, elapsed) end
+    end
+end
 -- The clickable owner of a visible text (buttons with SetText, or a button whose child font string has it).
 function H.clickText(text)
     for _, f in ipairs(frames) do
@@ -750,6 +758,64 @@ step("/did ticks again closes it", lambda: G.SlashCmdList.DOESITDIE("ticks"))
 check("  hidden", viewer.shown, False)
 step("Advanced tab's View button opens it", lambda: H.clickText("View"))
 check("  shown", viewer.shown, True)
+
+
+# Focus frame (Focus.lua): a focus mob ("FocusMob") with Blizzard's focus frame, a [@focus] Corruption on it.
+lua.execute("""
+    focusGuid = "Creature-0-1-2-3-3099-0000F0"
+    local unitExists, unitGUID = UnitExists, UnitGUID
+    function UnitExists(unit) if unit == "focus" then return focusGuid ~= nil end return unitExists(unit) end
+    function UnitGUID(unit) if unit == "focus" then return focusGuid end return unitGUID(unit) end
+    function UnitName(unit) if unit == "focus" and focusGuid then return "FocusMob" end end
+    local focus = CreateFrame("Frame", "FocusFrame", UIParent)
+    focus.TargetFrameContent = CreateFrame("Frame", nil, focus)
+    focus.TargetFrameContent.TargetFrameContentMain = CreateFrame("Frame", nil, focus.TargetFrameContent)
+    local main = focus.TargetFrameContent.TargetFrameContentMain
+    main.HealthBarsContainer = CreateFrame("Frame", nil, main)
+    main.HealthBarsContainer.HealthBar = CreateFrame("StatusBar", nil, main.HealthBarsContainer)
+    BlizzardFocusBar = main.HealthBarsContainer.HealthBar
+""")
+
+
+def markers_on(bar):
+    return [f for f in G.frames.values() if f.kind == "StatusBar" and f.allPoints is not None and same(f.allPoints, bar)]
+
+
+def focus_cast():
+    H.fire("UNIT_SPELLCAST_SENT", "player", "FocusMob", "cast-f1", 172)
+    H.fire("UNIT_SPELLCAST_SUCCEEDED", "player", "cast-f1", 172)
+    H.update(0.2)
+
+
+G.DoesItDieDB.nameplateMode = "markerIcon"
+step("[@focus] Corruption on the focus", focus_cast)
+focus_markers = markers_on(G.BlizzardFocusBar)
+check("  marker on Blizzard's focus health bar", len(focus_markers), 1)
+check("  filled to Corruption's 40", focus_markers[0].value if focus_markers else None, 40)
+check("  shown", focus_markers[0].shown if focus_markers else None, True)
+check("  status names it", ns.focusStatus(), "Blizzard's focus frame")
+step("another update (the nameplate refresh must leave it alone)", lambda: H.update(0.2))
+check("  still shown", focus_markers[0].shown if focus_markers else None, True)
+step("  and with the updates in the other order", lambda: H.updateReversed(0.2))
+check("  still shown", focus_markers[0].shown if focus_markers else None, True)
+lua.execute("focusGuid = nil")
+step("focus cleared", lambda: H.update(0.2))
+check("  hidden", focus_markers[0].shown if focus_markers else None, False)
+lua.execute('focusGuid = "Creature-0-1-2-3-3099-0000F0"')
+G.DoesItDieDB.showOnFocus = False
+step("focus back, Show on focus frame off", lambda: H.update(0.2))
+check("  hidden", focus_markers[0].shown if focus_markers else None, False)
+G.DoesItDieDB.showOnFocus = True
+lua.execute("""
+    local eui = CreateFrame("Frame", "EllesmereUIUnitFrames_Focus", UIParent)
+    eui.Health = CreateFrame("StatusBar", nil, eui)
+""")
+step("EllesmereUI's focus frame appears", lambda: H.update(0.2))
+eui_focus = markers_on(G.EllesmereUIUnitFrames_Focus.Health)
+check("  marker moves to its health bar", len(eui_focus), 1)
+check("  status names it", ns.focusStatus(), "EllesmereUI's focus frame")
+check("  Advanced tab has the focus rows", all(H.rowWidget(label, kind) is not None for label, kind in
+      (("Show on focus frame", "CheckButton"), ("Focus health bar", "EditBox"))), True)
 
 
 def lua_quote(text):

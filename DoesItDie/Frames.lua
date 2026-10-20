@@ -95,6 +95,20 @@ local KNOWN_TARGET_FRAMES = {
     { frame = "EllesmereUIUnitFrames_Target", bar = "Health", portrait = "Portrait", owner = "EllesmereUI's" },
 }
 
+-- The same for the focus frame (Focus.lua): only its health bar is needed. EllesmereUI's path verified in-game by
+-- a user (issue #12).
+local KNOWN_FOCUS_FRAMES = {
+    { frame = "EllesmereUIUnitFrames_Focus", bar = "Health", owner = "EllesmereUI's" },
+}
+
+-- A known replacement focus frame that's there: its health bar and whose it is, else nil.
+function ns.knownFocusFrame()
+    for _, known in ipairs(KNOWN_FOCUS_FRAMES) do
+        local bar = ns.resolveFramePath(known.frame .. "." .. known.bar)
+        if bar then return bar, known.owner end
+    end
+end
+
 -- Whether `region` and its ancestors below `root` are shown. The root itself is left out: a target frame hides
 -- while there's no target.
 local function shownBelow(region, root)

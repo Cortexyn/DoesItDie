@@ -16,4 +16,5 @@ Display.lua
 Frames.lua
 Options.lua
 Nameplates.lua
+Focus.lua
 Execute.lua

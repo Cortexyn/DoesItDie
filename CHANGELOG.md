@@ -1,5 +1,9 @@
 # DoesItDie
 
+## Unreleased
+
+- **Focus frame:** the marker and kill icon also show on your focus's health bar (Blizzard's, EllesmereUI's, or a custom one under Advanced), using the Nameplates tab's look. `/cast [@focus]` macros put the DoT on your focus. Thanks to toughnuts99 for the patch.
+
 ## v0.7.1
 
 - **Immolation Trap** is tracked. The DoT starts on whichever mob springs the trap.

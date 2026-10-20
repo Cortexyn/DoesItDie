@@ -953,6 +953,15 @@ local function buildTabs()
         .. "Fine-tune with the offsets on the Kill icon tab." })
     advanced:info("Health bar in use", function() return (ns.attachStatus()) end)
     advanced:info("Kill icon in use", function() return select(2, ns.attachStatus()) end)
+    -- Focus frame (Focus.lua).
+    advanced:gap()
+    advanced:checkbox("showOnFocus", "Show on focus frame", { tooltip = "The marker on your focus's health bar too, "
+        .. "for your DoTs on it, with the kill icon if the Nameplates tab shows one. Uses the Nameplates tab's look." })
+    advanced:frame("customFocusHealthBar", "Focus health bar", "bar", { tooltip = "For unit frame addons that "
+        .. "replace Blizzard's focus frame. Focus something, click Pick, then click its health bar. Leave empty for "
+        .. "Blizzard's, or EllesmereUI's when it shows its own focus frame.",
+        enabledIf = function(settings) return settings.showOnFocus end })
+    advanced:info("Focus bar in use", function() return ns.focusStatus and ns.focusStatus() or "" end)
 end
 
 local function buildPreview(pane)
