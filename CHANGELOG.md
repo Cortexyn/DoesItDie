@@ -1,6 +1,6 @@
 # DoesItDie
 
-## Unreleased
+## v0.8.1
 
 - **Plater and other nameplate addons:** the nameplate marker finds their health bars automatically. If yours still doesn't show it, Advanced > Nameplate health bar takes the path to its bar.
 
