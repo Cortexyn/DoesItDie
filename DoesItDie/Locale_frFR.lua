@@ -31,6 +31,16 @@ local function strip(s)
     return s:lower()
 end
 
+-- The French client writes a non-breaking space (U+00A0 \194\160, or narrow U+202F \226\128\175) between the
+-- number and "points" -- "78\194\160points de dégâts ..." -- which %s doesn't match, so the amount patterns miss
+-- it (seen in-game: Immolation and Plaie d'agonie logged NOT READ, while Corruption, which uses an ordinary
+-- space, worked). Immolation also reorders to "points supplémentaires de dégâts". Fix both before matching.
+local function normalize(desc)
+    desc = desc:gsub("\194\160", " "):gsub("\226\128\175", " ")
+    desc = desc:gsub("points supplémentaires de dégâts", "points de dégâts supplémentaires")
+    return desc
+end
+
 -- Accent-free stems of the school words, combined schools first.
 local SCHOOL_STEMS = {
     { "givrefeu", 4 + 16 }, { "ombre", 32 }, { "arcane", 64 }, { "givre", 16 }, { "feu", 4 }, { "nature", 8 },
@@ -77,11 +87,13 @@ local NAMES = {
 }
 
 local function isFinisher(desc)
+    desc = normalize(desc)
     return desc:find("Coup de grâce") ~= nil
 end
 
 -- Builders: "Vous gagnez 1 point de combo."
 local function comboPointsAwarded(desc)
+    desc = normalize(desc)
     return tonumber(desc:match("[Vv]ous gagnez%s+(%d+)%s*points? de combo"))
 end
 
@@ -100,6 +112,7 @@ local function parseFinisher(desc, comboPoints)
 end
 
 local function parseDot(desc, comboPoints)
+    desc = normalize(desc)
     if isFinisher(desc) then return parseFinisher(desc, comboPoints or 5) end
     -- Weapon enchants (rogue poisons: "Enduit une arme...") are proc DoTs, not cast on the target.
     if desc:find("[Ee]nduit") then return nil end
