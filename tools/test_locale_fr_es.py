@@ -122,6 +122,16 @@ FR_CASES = [
      None, "ignored (list)"),
     ("Captation de vie", "Rend 12 points de vie toutes les secondes au familier du personnage lanceur pendant 10 sec.",
      None, "ignored (list)"),
+    # --- non-breaking space (U+00A0) between the number and "points", exactly as the French client sends it;
+    #     lupa re-encodes " " to the UTF-8 bytes \194\160. Both were logged NOT READ in-game before the fix.
+    ("Plaie d'agonie", "Afflige la cible d’une plaie d’agonie qui lui inflige 78 points de dégâts d’ombre en 24 sec. Les dégâts sont progressifs et sont plus importants avec le temps. La cible ne peut être victime que d’une plaie par démoniste à la fois.",
+     None, "78 dmg, school 32, 24s, every 2s -> 12 ticks of 6.5"),
+    # Immolation also reorders to "points supplémentaires de dégâts"; both NBSP and word order are handled.
+    ("Immolation", "Brûle l’ennemi et lui inflige 22 points de dégâts de feu, puis 32 points supplémentaires de dégâts de feu en 15 sec.",
+     None, "32 dmg, school 4, 15s, every 3s -> 5 ticks of 6.4"),
+    # Finisher with NBSP in the per-combo table (tested, not re-verified in-game).
+    ("Déchirure", "Coup de grâce qui inflige des dégâts sur la durée. Les dégâts augmentent avec le nombre de points de combo et votre puissance d'attaque : 1 point : 44 points de dégâts en 12 sec. 2 points : 71 points de dégâts en 12 sec. 3 points : 97 points de dégâts en 12 sec. 4 points : 124 points de dégâts en 12 sec. 5 points : 150 points de dégâts en 12 sec.",
+     5, "150 dmg, school 1, 12s, every 2s -> 6 ticks of 25.0"),
 ]
 
 
@@ -156,6 +166,8 @@ ES_CASES = [
 EXTRA = [
     ("fr combo awarded (Garrot)", locale.comboPointsAwarded("... Vous gagnez 1 point de combo."), 1),
     ("fr no combo line", locale.comboPointsAwarded("Inflige 40 points de dégâts d'Ombre en 12 sec."), None),
+    # combo line with a non-breaking space (tested, not re-verified in-game)
+    ("fr combo awarded (NBSP)", locale.comboPointsAwarded("... Vous gagnez 1 point de combo."), 1),
     ("fr finisher (Déchirure)", locale.isFinisher("Coup de grâce qui inflige des dégâts sur la durée."), True),
     ("fr not a finisher", locale.isFinisher("Corrompt la cible et lui inflige 40 points de dégâts."), False),
     ("es combo awarded (punto)", locale.comboPointsAwarded("Otorga 1 punto de combo."), 1),
