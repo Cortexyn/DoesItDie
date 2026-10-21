@@ -397,6 +397,30 @@ local function describeReading(ok, value)
     return tostring(value)
 end
 
+-- L11-1: what the game's own combo point display is showing, for the client
+-- that keeps the number itself secret. Same source ResourceDing reads
+-- (ComboFrame + ComboPointN.Highlight alpha), so both addons agree in combat
+-- instead of DoesItDie logging "unknown" while ResourceDing shows 5/5.
+local function displayedComboPoints()
+    local frame = _G and _G.ComboFrame
+    if type(frame) ~= "table" or type(frame.IsShown) ~= "function" then return nil end
+    local ok, shown = pcall(frame.IsShown, frame)
+    if not ok or isSecret(shown) then return nil end
+    if not shown then return 0 end
+    local count = 0
+    for index = 1, 12 do
+        local point = _G["ComboPoint" .. index]
+        local highlight = type(point) == "table" and point.Highlight
+        if type(highlight) ~= "table" or type(highlight.GetAlpha) ~= "function" then break end
+        local okV, visible = pcall(point.IsShown, point)
+        local okA, alpha = pcall(highlight.GetAlpha, highlight)
+        if not okV or not okA or isSecret(visible) or isSecret(alpha) then return nil end
+        if type(alpha) ~= "number" then return nil end
+        if visible and alpha > 0.5 then count = count + 1 end
+    end
+    return count
+end
+
 -- Returns the best plain reading (or nil) and a description of what each API returned, for the log.
 local function readComboPoints()
     local best, parts = nil, {}
@@ -408,6 +432,10 @@ local function readComboPoints()
     if UnitPower and Enum and Enum.PowerType and Enum.PowerType.ComboPoints then
         consider("UnitPower", pcall(UnitPower, "player", Enum.PowerType.ComboPoints))
     end
+    -- L11-1: the APIs above go secret in combat while the display stays
+    -- readable; without this a finisher parses the 1-point entry (42) while
+    -- ResourceDing shows 5/5 (138).
+    consider("display", true, displayedComboPoints())
     return best, table.concat(parts, " ")
 end
 
@@ -426,15 +454,27 @@ end
 -- the target (a /cast [@focus] macro) goes on the focus. A same-named target and focus can't be told apart: the
 -- target, as before. A focus whose GUID is secret can't be tracked, so that cast is skipped (false), not put on the
 -- target. From toughnuts99's patch (issue #12).
+-- DOT-1: a friendly hard target must not steal a cast aimed at an enemy soft target. Prefer the hard target only
+-- while it is attackable; the focus branch below still wins for a [@focus] macro.
 local function sentTargetKey(targetName)
-    local targetKey = unitKey("target")
+    local okAttack, attackable = pcall(UnitCanAttack, "player", "target")
+    local targetKey
+    if okAttack and not isSecret(attackable) and attackable == false then
+        targetKey = unitKey("softenemy")
+    else
+        -- Attackable, or the client cannot say: keep the old target behaviour.
+        targetKey = unitKey("target")
+    end
     if type(targetName) ~= "string" or isSecret(targetName) or targetName == "" then return targetKey end
     local function nameOf(unit)
         local ok, name = pcall(UnitName, unit)
         if ok and type(name) == "string" and not isSecret(name) then return name end
     end
-    if nameOf("target") == targetName or nameOf("focus") ~= targetName then return targetKey end
-    return unitKey("focus") or false
+    if nameOf("target") == targetName then return targetKey end
+    if nameOf("focus") == targetName then return unitKey("focus") or false end
+    -- A mouseover/soft-target cast names the soft enemy even while an attackable hard target is selected.
+    if nameOf("softenemy") == targetName then return unitKey("softenemy") or false end
+    return targetKey
 end
 
 local function onCastSent(spellID, castGUID, targetName)
@@ -554,14 +594,21 @@ local function onHit(key, school)
         lastOutcome.immune = prior
     end
     if lastBuilder and lastBuilder.key == key then lastBuilder = nil end
+    -- UNIT_COMBAT can hand out a secret school; this runs before the amount/school guard, so never compare it.
+    local schoolKnown = not isSecret(school)
     if lastDotCast and lastDotCast.key == key and not lastDotCast.landedAt
-        and (lastDotCast.dot.school == SCHOOL_MASKS.Physical or lastDotCast.dot.school == school) then
+        and (lastDotCast.dot.school == SCHOOL_MASKS.Physical
+            or (schoolKnown and lastDotCast.dot.school == school)) then
         lastDotCast.landedAt = now
     end
 end
 
 local function resetComboCount()
     countedPoints, lastBuilder = 0, nil
+    -- DOT-2: the cache belongs to the old target too. Without this a finisher
+    -- on a fresh target reuses points built on the previous one (5 CP -> 138
+    -- instead of the cautious 1-point 42).
+    lastComboPoints, lastComboAt = nil, 0
 end
 
 -- Returns points and where they came from, or nil and "unknown".
@@ -587,6 +634,9 @@ local function newDot(spellID, tickKey, name, total, school, duration, statedInt
     return {
         spellID = spellID,
         tickKey = tickKey,
+        -- F2: the size learned before this cast, so a same-slot collision is judged against the old value,
+        -- not the one the disputed tick just wrote.
+        learnedAtApply = tickKey and db.ticks[tickKey] or nil,
         school = SCHOOL_BY_NAME[name] or school,
         total = total,
         duration = duration,
@@ -762,13 +812,14 @@ local function plausibleTickAmount(dot, amount, isCrit, number)
 end
 
 -- Tick size to judge a same-slot collision by: the average of the DoT's earlier ticks, or with fewer than two
--- ticks the description's per-tick share. Deliberately not the learned size, which is what a collision can
--- corrupt.
+-- ticks the size learned before this cast (F2), else the description's per-tick share. Learned first: the
+-- description's share is what a collision corrupts toward, so judging against it lets a white hit swap out a
+-- real tick.
 local function referenceTickSize(dot)
     if dot.normalTicks > 1 then
         return (dot.tickSum - dot.lastTickAmount / dot.lastTickShape) / (dot.normalTicks - 1)
     end
-    return dot.total / dot.totalTicks
+    return dot.learnedAtApply or (dot.total / dot.totalTicks)
 end
 
 local function saveLearnedTick(dot)
@@ -800,7 +851,8 @@ end
 -- first one was taken as the tick. If this one is closer to the expected size, it was the real tick.
 local SAME_SLOT_SECONDS = 0.2
 local function trySwapSameSlot(dot, name, amount, isCrit, now)
-    if isCrit or dot.lastTickCrit or not dot.lastTickAt or now - dot.lastTickAt > SAME_SLOT_SECONDS then
+    if isCrit or amount <= 0 or dot.lastTickCrit or not dot.lastTickAt
+        or dot.lastTickAmount <= 0 or now - dot.lastTickAt > SAME_SLOT_SECONDS then
         return false
     end
     local factor = dot.lastTickShape
@@ -816,10 +868,11 @@ end
 -- A learned size that's wrong rejects every real tick (log: Corruption learned 29 from Shadow Bolts, real ticks
 -- 10-11, every cast dropped). Hits rejected only on size, but landing on the DoT's rhythm in two consecutive
 -- slots and agreeing with each other, are the real ticks: relearn from them.
+-- Description damage omits stat bonuses; a band around it or the old learned size can lock out real ticks.
 local function tryRelearn(dot, name, amount, isCrit, index, distance, now)
     local window = dot.firstTickAt and TICK_MATCH_WINDOW_ANCHORED or TICK_MATCH_WINDOW
     local freshSlot = not dot.firstTickAt or index > dot.lastTickIndex
-    if isCrit or not freshSlot or distance > window then return false end
+    if isCrit or amount <= 0 or not freshSlot or distance > window then return false end
     local previous = dot.offBeatCandidate
     local factor = tickShape(dot, tickNumberAt(dot, now))
     local average = amount / factor
@@ -849,7 +902,7 @@ local function recordTick(dot, amount, isCrit, index, now)
     dot.ticksSeen = dot.ticksSeen + 1
     dot.lastTickAmount, dot.lastTickShape, dot.lastTickCrit = amount, factor, isCrit
     dot.offBeatCandidate = nil
-    if not isCrit then
+    if not isCrit and amount > 0 then
         dot.tickSum = dot.tickSum + amount / factor
         dot.normalTicks = dot.normalTicks + 1
         saveLearnedTick(dot)
@@ -888,45 +941,81 @@ end
 
 -- Returns the target key when this hit was the first tick of a DoT that was waiting for it (so the display
 -- can flash now that the DoT shows), else nil.
-local lastCombatSignature
+-- F1: two same-school ticks landing in the same instant share one signature
+-- (key:amount:school:time), so the second was dropped as a cross-token
+-- duplicate and its DoT starved into DROP. Track which DoTs the hit already
+-- fed and let a repeat feed a different one — but only from the SAME unit
+-- token: a repeat from another token is the same hit seen twice and stays
+-- dropped, so one hit can never feed two DoTs (no false skull).
+local combatFrameAt
+local combatFrameHits = {}
 local function onUnitCombat(unit, action, flag, amount, school)
     if isSecret(action) then return end
-    if not AVOIDED_ACTIONS[action] and action ~= "WOUND" then return end
+    -- DOT-6: an absorbed tick still landed on the mob (the shield ate it),
+    -- so it proves the DoT is alive and keeps its rhythm. Treat ABSORB like
+    -- WOUND for matching, but never let a 0 feed tickSum/learned sizes.
+    local absorbed = action == "ABSORB"
+    if not AVOIDED_ACTIONS[action] and action ~= "WOUND" and not absorbed then return end
     local key = unitKey(unit)
     if not key then return end
     if AVOIDED_ACTIONS[action] then return onAvoided(key, action, school) end
-    onHit(key, school)
+    if action == "WOUND" or absorbed then onHit(key, school) end
     if isSecret(amount) or isSecret(school) or type(amount) ~= "number" then return end
     local isCrit = not isSecret(flag) and flag == "CRITICAL"
     if not dotsByTarget[key] and not armedTrap then return end
     local dots = dotsByTarget[key] or {}
 
     -- The same hit fires for target, nameplateN, softenemy...: handle it once.
+    -- F1: a second real same-school tick in the same instant may feed another
+    -- DoT. Repeats from the same unit token feed a different unfed DoT;
+    -- repeats from another token are the same hit seen twice and stay dropped.
     local now = GetTime()
-    local signature = key .. ":" .. amount .. ":" .. school .. ":" .. now
-    if signature == lastCombatSignature then return end
-    lastCombatSignature = signature
+    if combatFrameAt ~= now then
+        combatFrameHits = {}
+        combatFrameAt = now
+    end
+    local signature = key .. ":" .. amount .. ":" .. school
+    local hit = combatFrameHits[signature]
+    if hit then
+        if hit.unit ~= unit then return end
+    else
+        hit = { unit = unit, fed = {} }
+        combatFrameHits[signature] = hit
+    end
+    local lastCombatFed = hit.fed
 
     local best, bestName, bestDistance, bestIndex
+    local zeroAbsorb = absorbed and amount == 0
+    local candidates = 0
     for name, dot in pairs(dots) do
-        if dot.school == school and plausibleTickAmount(dot, amount, isCrit, tickNumberAt(dot, now)) then
+        if not lastCombatFed[name] and dot.school == school
+            and (zeroAbsorb or plausibleTickAmount(dot, amount, isCrit, tickNumberAt(dot, now))) then
             local distance, index = distanceToExpectedTick(dot, now)
             local window = dot.firstTickAt and TICK_MATCH_WINDOW_ANCHORED or TICK_MATCH_WINDOW
             -- Each tick slot takes one hit: a second hit near an already-matched tick is someone else's.
             local freshSlot = not dot.firstTickAt or index > dot.lastTickIndex
-            if freshSlot and distance <= window and (not bestDistance or distance < bestDistance) then
-                best, bestName, bestDistance, bestIndex = dot, name, distance, index
+            if freshSlot and distance <= window then
+                candidates = candidates + 1
+                if not bestDistance or distance < bestDistance then
+                    best, bestName, bestDistance, bestIndex = dot, name, distance, index
+                end
             end
         end
     end
+    -- A zero absorb has no size to distinguish two same-school DoTs.
+    if zeroAbsorb and candidates ~= 1 then return end
     if not best then
         -- Not a tick as things stand; it may still correct one (same-slot swap, or a wrong learned size).
         for name, dot in pairs(dots) do
-            if dot.school == school then
+            if not lastCombatFed[name] and dot.school == school then
                 local distance, index = distanceToExpectedTick(dot, now)
                 local wasWaiting = isWaiting(dot)
-                if trySwapSameSlot(dot, name, amount, isCrit, now) then return end
+                if trySwapSameSlot(dot, name, amount, isCrit, now) then
+                    lastCombatFed[name] = true
+                    return
+                end
                 if tryRelearn(dot, name, amount, isCrit, index, distance, now) then
+                    lastCombatFed[name] = true
                     return wasWaiting and key or nil
                 end
             end
@@ -940,6 +1029,7 @@ local function onUnitCombat(unit, action, flag, amount, school)
 
     local wasWaiting = isWaiting(best)
     local tickIndex, factor = recordTick(best, amount, isCrit, bestIndex, now)
+    lastCombatFed[bestName] = true
     trace(string.format("TICK %s %d%s on %s (tick %d/%d, expecting %.1f for this tick)%s", bestName, amount,
         isCrit and " CRIT" or "", unit, tickIndex, best.totalTicks, expectedTick(best) * factor,
         wasWaiting and ", now shown" or ""))
