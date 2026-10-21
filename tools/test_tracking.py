@@ -44,6 +44,12 @@ function UnitExists(unit) return unitKey(unit) ~= nil end
 -- A unit's name is its mob key, unless given one (two mobs with the same name).
 local names = {}
 function UnitName(unit) return names[unit] or unitKey(unit) end
+-- Whether the player can attack a unit (nil: the client can't say).
+local attackable = {}
+function UnitCanAttack(_, unit) return attackable[unit] end
+-- Combo points: the API's reading (nil while secret), and Blizzard's display (ComboFrame, set by api.comboDisplay).
+local comboReading
+function GetComboPoints() return comboReading end
 local castCount = 0
 local SPELLS = {
     [1] = { "Corruption", "Corrupts the target, causing 40 Shadow damage over 12 sec." },
@@ -62,6 +68,7 @@ local SPELLS = {
     [12] = { "Fluch der Pein", "Verflucht das Ziel mit Pein und fügt 24 Sek. lang 72 Punkt(e) Schattenschaden zu. Zuerst wird der Schaden langsam zugefügt und nimmt dann zu, bis der Fluch seine Gesamtdauer erreicht hat." },
     [13] = { "Feuerregen", "Lässt einen feurigen Regen niedergehen, der 8 Sek. lang Feinde im Wirkungsbereich mit 168 Punkt(en) Feuerschaden verbrennt." },
     [14] = { "Immolation Trap", "Place a Fire trap that will burn the first enemy to approach for 690 Fire damage over 15 sec. Trap will exist for 1 min. Only one Fire trap can be active at a time." },
+    [16] = { "Shadow Word: Pain", "A word of darkness that causes 40 Shadow damage over 12 sec." },
     [15] = { "Explosive Trap", "Place a Fire trap that explodes when an enemy approaches, causing 201 to 257 Fire damage and 330 additional Fire damage over 20 sec to all within 10 yards. Trap will exist for 1 min. Only one Fire trap can be active at a time." },
 }
 local function spellNameAndDescription(id) return SPELLS[id][1], SPELLS[id][2] end
@@ -77,7 +84,8 @@ function api.reset(waitMode, estimateDuringCast)
     db.estimateDuringCast = estimateDuringCast ~= false
     if dropCastInProgress then dropCastInProgress("reset") end
     resetComboCount()
-    targetKey, plates, names = "mob", {}, {}
+    targetKey, plates, names, attackable, comboReading = "mob", {}, {}, {}, nil
+    ComboFrame = nil
     log = {}
 end
 function api.learn(spellID, perTick) db.ticks[spellID] = perTick end
@@ -111,6 +119,21 @@ function api.advance(seconds) now = now + seconds; housekeep(now) end
 function api.marker() local damage, count = targetRemainingDamage(); return damage .. " dmg from " .. count .. " DoT(s)" end
 function api.markerOn(key) local total = 0; for _, e in ipairs(dotBreakdown(key)) do total = total + e.damage end; return math.floor(total + 0.5) .. " dmg" end
 function api.counted() return countedPoints end
+-- Any UNIT_COMBAT event (ABSORB, ...).
+function api.raw(unit, action, amount, school) return onUnitCombat(unit, action, "", amount, school) end
+function api.canAttack(unit, value) attackable[unit] = value end
+function api.comboAPI(points) comboReading = points end
+-- Blizzard's combo point display showing `lit` of 5 points (nil: hidden).
+function api.comboDisplay(lit)
+    ComboFrame = { IsShown = function() return lit ~= nil end }
+    for i = 1, 5 do
+        _G["ComboPoint" .. i] = { IsShown = function() return true end,
+            Highlight = { GetAlpha = function() return (lit and i <= lit) and 1 or 0 end } }
+    end
+end
+function api.readCombo() local points = readComboPoints(); return points end
+function api.cacheCombo(points) lastComboPoints, lastComboAt = points, now end
+function api.comboForCast() local points, source = comboPointsForCast(); return tostring(points) .. " " .. source end
 function api.provisional()
     for _, entry in ipairs(dotBreakdown("mob")) do if entry.provisional then return true end end
     return false
@@ -517,6 +540,68 @@ sim.reset(); sim.learn(14, 200); sim.cast(14); sim.advance(5); sim.hit(138, 4)
 check("With a learned size, a hit far off it isn't the trap", sim.marker(), "0 dmg from 0 DoT(s)")
 sim.advance(1); sim.hit(205, 4)
 check("  one close to it is", sim.marker(), "820 dmg from 1 DoT(s)")
+
+# PR #14 (Ironship). Two DoTs of one school ticking for the same amount in the same instant: two hits from one
+# token, not a copy. Previously the second was dropped as a duplicate and its DoT as "never ticked".
+def ticks(name):
+    return sim.log().count("TICK " + name)
+
+
+sim.reset(); sim.learn(1, 10); sim.learn(16, 10); sim.cast(1); sim.cast(16)
+for _ in range(2):
+    sim.advance(3); sim.hit(10, 32); sim.hit(10, 32)
+check("Corruption + SW:Pain ticking 10 at once: both ticks counted", (ticks("Corruption"), ticks("Shadow Word: Pain")),
+      (2, 2))
+sim.advance(3.5)
+check("  neither dropped", "DROP" in sim.log(), False)
+sim.reset(); sim.learn(1, 10); sim.learn(16, 10); sim.plate("nameplate1", "mob"); sim.cast(1); sim.cast(16)
+sim.advance(3)
+sim.hit(10, 32); sim.hit(10, 32, "", "nameplate1"); sim.hit(10, 32); sim.hit(10, 32, "", "nameplate1")
+check("  each also seen on its nameplate (interleaved): one tick each", (ticks("Corruption"),
+      ticks("Shadow Word: Pain")), (1, 1))
+sim.reset(); sim.learn(1, 10); sim.plate("nameplate1", "mob"); sim.cast(1)
+sim.advance(3); sim.hit(10, 32); sim.hit(10, 32, "", "nameplate1")
+check("One DoT's tick seen on target and nameplate: counted once", sim.marker(), "30 dmg from 1 DoT(s)")
+
+# A fully absorbed tick (ABSORB, 0) still proves the DoT is on; previously it was dropped as never ticked.
+sim.reset(); sim.learn(1, 10); sim.cast(1)
+for _ in range(3):
+    sim.advance(3); sim.raw("target", "ABSORB", 0, 32)
+check("Corruption's ticks absorbed by a shield: still tracked", sim.marker(), "10 dmg from 1 DoT(s)")
+check("  the 0s don't teach a tick size", sim.learned(1), 10)
+sim.reset(); sim.learn(1, 10); sim.learn(16, 10); sim.cast(1); sim.cast(16)
+sim.advance(3); sim.raw("target", "ABSORB", 0, 32)
+check("  an absorbed tick two DoTs could own: ignored", (ticks("Corruption"), ticks("Shadow Word: Pain")), (0, 0))
+
+# Same-slot swap judged by the size learned before the cast, not the tooltip's (which leaves out attack power).
+sim.reset(); sim.learn(2, 26); sim.cast(2); sim.advance(0.05); sim.hit(19, 1)
+sim.advance(2.95); sim.hit(20, 1); sim.advance(0.1); sim.hit(26, 1)
+check("Rake (learned 26, tooltip 13): a white 20 just before its 26 tick: swapped", "SWAP Rake" in sim.log(), True)
+check("  learned size stays 26", sim.learned(2), 26)
+
+# Combo points: a cached reading belongs to the target it was built on.
+sim.reset(); sim.target("A"); sim.cacheCombo(5); sim.advance(1); sim.target("B")
+check("5 points cached on A, finisher on B: points unknown (errs low)", sim.comboForCast(), "nil unknown")
+# Blizzard's combo point display: only when the API has no number, never raising a readable one.
+sim.reset(); sim.comboAPI(None); sim.comboDisplay(3)
+check("API secret, display shows 3: 3", sim.readCombo(), 3)
+sim.reset(); sim.comboAPI(2); sim.comboDisplay(5)
+check("API reads 2, display shows 5: the API's 2", sim.readCombo(), 2)
+sim.reset(); sim.comboAPI(None)
+check("API secret, no display: unknown", sim.readCombo(), None)
+
+# Soft targets: a friendly hard target never takes a cast; a cast named for the soft enemy goes on it.
+sim.reset(); sim.target("friend"); sim.canAttack("target", False); sim.plate("softenemy", "B")
+sim.succeed(1, sim.send(1, None, "B"))
+check("Friendly target, DoT cast at soft enemy B: on B", (sim.markerOn("B"), sim.markerOn("friend")),
+      ("40 dmg", "0 dmg"))
+sim.reset(); sim.target("A"); sim.canAttack("target", True); sim.plate("softenemy", "B")
+sim.succeed(1, sim.send(1, None, "B"))
+check("Enemy target A, DoT cast at soft enemy B (mouseover): on B", (sim.markerOn("B"), sim.markerOn("A")),
+      ("40 dmg", "0 dmg"))
+sim.reset(); sim.target("A"); sim.canAttack("target", True); sim.plate("softenemy", "B")
+sim.succeed(1, sim.send(1, None, "A"))
+check("  cast at A itself: on A", (sim.markerOn("A"), sim.markerOn("B")), ("40 dmg", "0 dmg"))
 
 print(f"\n{'all passed' if not failures else str(failures) + ' FAILED'}")
 if failures:

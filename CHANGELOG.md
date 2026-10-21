@@ -1,5 +1,16 @@
 # DoesItDie
 
+## Unreleased
+
+- **German options window:** set Advanced > Window language to Deutsch (or Auto on a German client), then /reload. Thanks to thecodingcortex.
+- **French client fixes:** Immolation and Plaie d'agonie are read again. Thanks to gou-gouze.
+- **Tracking fixes** (thanks to Ironship):
+  - Two DoTs of the same school ticking at the same moment are both counted (one was dropped before).
+  - A DoT whose ticks a shield absorbs is no longer dropped.
+  - A melee hit landing just before a bleed's tick is no longer learned as the bleed's size.
+  - Combo points built on one mob are no longer used for a finisher on the next.
+  - DoTs cast on your soft or mouseover target go on that mob, and never on a friendly target.
+
 ## v0.8.1
 
 - **Plater and other nameplate addons:** the nameplate marker finds their health bars automatically. If yours still doesn't show it, Advanced > Nameplate health bar takes the path to its bar.

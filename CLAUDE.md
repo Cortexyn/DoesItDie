@@ -75,12 +75,16 @@ Consequences for the design:
 1. **Cast** (`UNIT_SPELLCAST_SUCCEEDED`, player only): parse the description (`parseDot`). Skip ignored spells
    (AoE, channels, Explosive Trap, delayed damage), heals and weapon poisons. Finishers (Rip, Rupture) read the
    per-combo-point table. The DoT goes on the mob that was targeted at `UNIT_SPELLCAST_SENT` (matched by cast
-   GUID): players who tab-dot have often changed target by the time an instant's cast event arrives.
+   GUID): players who tab-dot have often changed target by the time an instant's cast event arrives. The send
+   event names the cast's target: a name matching the focus or the soft enemy (and not the target) puts it on
+   that mob, and a friendly hard target never takes a cast (the soft enemy does; `sentTargetKey`).
    **Immolation Trap** (`TRAP_DOTS`) only arms on cast: the trap casts the DoT when it springs, with no event for
    the player. The first unmatched Fire hit of a plausible size on any mob, at least one tick after placing and
    within the trap's minute, becomes its tick 1 (`springTrap`). Placing another Fire trap disarms it.
 2. **Combo points** are secret, so they're **counted** from builders ("Awards N combo point"), with dodges and
-   misses taken back and resets on finishers and target changes. If unknown, finishers assume the lowest entry.
+   misses taken back and resets on finishers and target changes (which also clear the cached reading). When the
+   APIs give no number, Blizzard's combo point display is read (`displayedComboPoints`, PR #14; unverified
+   in-game), never over a readable API number. If unknown, finishers assume the lowest entry.
 3. **Cast outcomes:** a dodge/parry/miss/resist/immune on the cast's mob right after a cast removes that DoT (or
    restores the previous one on a recast). `UNIT_COMBAT` doesn't say which attack was avoided; the first outcome
    right after the cast decides. For spell (non-Physical) DoTs, the pet's melee is the usual culprit: dodges and
@@ -92,7 +96,11 @@ Consequences for the design:
 4. **Ticks:** each `UNIT_COMBAT` hit on the target is matched to at most one DoT: same school, within a tight
    timing window of the DoT's rhythm, and a plausible size (crits 1.3–2.3×). Physical bleeds and melee white hits
    look alike, hence the tight windows. Learned tick sizes are saved per spell (per combo point count for
-   finishers). A DoT that never ticks is dropped after two missed ticks, but only ticks that could have been
+   finishers). The same hit arrives once per unit token showing the mob and counts once, but two DoTs of one
+   school ticking the same amount in the same instant are two hits from one token and feed both
+   (`combatFrameHits`). A fully absorbed tick (ABSORB, 0) keeps a DoT's rhythm without teaching a size, when only
+   one DoT fits. Same-slot swaps are judged by the size learned before the cast, not the tooltip's (which leaves
+   out attack/spell power). A DoT that never ticks is dropped after two missed ticks, but only ticks that could have been
    seen count: `UNIT_COMBAT` only covers the target, focus and visible nameplates, so a mob you tabbed away from
    keeps its DoTs until they expire.
 5. **Mob keys:** DoTs are kept per mob by GUID. In instances creature GUIDs are reportedly secret (PR #8), so a
@@ -129,7 +137,7 @@ Tuning constants (tick windows, tolerances, fallbacks) are at the top of `DoesIt
     `"Interface\\Buttons\\WHITE8X8"`. Edit Lua with file tools, and grep `Interface` after scripted edits.
   - Guard every value that might be secret with `isSecret()` before comparing or indexing with it.
   - Bump `DB_VERSION` when learned tick data from older versions would be wrong.
-  - Lua allows 200 locals per function scope, including a file's top level. `DoesItDie.lua` uses 100 and
+  - Lua allows 200 locals per function scope, including a file's top level. `DoesItDie.lua` uses 102 and
     `Display.lua` 104; features with many top-level locals still belong in a new file (added to the .toc) sharing
     `ns`, and setup-only locals go in `do ... end` blocks (as in `Display.lua`). `test_load.py` runs Lua 5.1
     (`lupa.lua51`), so going over fails it.

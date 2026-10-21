@@ -397,10 +397,9 @@ local function describeReading(ok, value)
     return tostring(value)
 end
 
--- L11-1: what the game's own combo point display is showing, for the client
--- that keeps the number itself secret. Same source ResourceDing reads
--- (ComboFrame + ComboPointN.Highlight alpha), so both addons agree in combat
--- instead of DoesItDie logging "unknown" while ResourceDing shows 5/5.
+-- The combo points the game's own display shows (ComboFrame, a lit ComboPointN.Highlight per point), for when the
+-- number itself is secret: the display stays readable in combat. 0 when the frame is hidden, nil if unreadable.
+-- From PR #14 (Ironship). Unverified in-game here.
 local function displayedComboPoints()
     local frame = _G and _G.ComboFrame
     if type(frame) ~= "table" or type(frame.IsShown) ~= "function" then return nil end
@@ -432,10 +431,13 @@ local function readComboPoints()
     if UnitPower and Enum and Enum.PowerType and Enum.PowerType.ComboPoints then
         consider("UnitPower", pcall(UnitPower, "player", Enum.PowerType.ComboPoints))
     end
-    -- L11-1: the APIs above go secret in combat while the display stays
-    -- readable; without this a finisher parses the 1-point entry (42) while
-    -- ResourceDing shows 5/5 (138).
-    consider("display", true, displayedComboPoints())
+    -- Only when neither API gave a number (secret in combat): the display is read by appearance, so it must
+    -- never raise a readable count (too many points would mean a too-high estimate, a false kill icon).
+    if best == nil then
+        consider("display", true, displayedComboPoints())
+    else
+        table.insert(parts, "display=not needed")
+    end
     return best, table.concat(parts, " ")
 end
 
@@ -451,11 +453,10 @@ local function isFinisherDescription(desc)
 end
 
 -- The mob a cast is going to. UNIT_SPELLCAST_SENT only names it, so a cast whose name matches the focus but not
--- the target (a /cast [@focus] macro) goes on the focus. A same-named target and focus can't be told apart: the
--- target, as before. A focus whose GUID is secret can't be tracked, so that cast is skipped (false), not put on the
--- target. From toughnuts99's patch (issue #12).
--- DOT-1: a friendly hard target must not steal a cast aimed at an enemy soft target. Prefer the hard target only
--- while it is attackable; the focus branch below still wins for a [@focus] macro.
+-- the target (a /cast [@focus] macro) goes on the focus (toughnuts99's patch, issue #12), and one whose name
+-- matches the soft enemy (a mouseover or soft-target cast) goes on that. A same-named target wins, as before. A
+-- focus or soft enemy whose GUID is secret can't be tracked, so that cast is skipped (false), not put on the target.
+-- A friendly hard target never takes a cast: with one selected, the soft enemy is the cast's default mob (PR #14).
 local function sentTargetKey(targetName)
     local okAttack, attackable = pcall(UnitCanAttack, "player", "target")
     local targetKey
@@ -605,9 +606,8 @@ end
 
 local function resetComboCount()
     countedPoints, lastBuilder = 0, nil
-    -- DOT-2: the cache belongs to the old target too. Without this a finisher
-    -- on a fresh target reuses points built on the previous one (5 CP -> 138
-    -- instead of the cautious 1-point 42).
+    -- The cached reading belongs to the old target too: a finisher on a new target would otherwise use the points
+    -- built on the previous one (5 points' damage instead of the cautious 1-point entry).
     lastComboPoints, lastComboAt = nil, 0
 end
 
@@ -634,8 +634,8 @@ local function newDot(spellID, tickKey, name, total, school, duration, statedInt
     return {
         spellID = spellID,
         tickKey = tickKey,
-        -- F2: the size learned before this cast, so a same-slot collision is judged against the old value,
-        -- not the one the disputed tick just wrote.
+        -- The size learned before this cast: a same-slot collision is judged against it, not against the value
+        -- the disputed tick just wrote (referenceTickSize).
         learnedAtApply = tickKey and db.ticks[tickKey] or nil,
         school = SCHOOL_BY_NAME[name] or school,
         total = total,
@@ -812,9 +812,9 @@ local function plausibleTickAmount(dot, amount, isCrit, number)
 end
 
 -- Tick size to judge a same-slot collision by: the average of the DoT's earlier ticks, or with fewer than two
--- ticks the size learned before this cast (F2), else the description's per-tick share. Learned first: the
--- description's share is what a collision corrupts toward, so judging against it lets a white hit swap out a
--- real tick.
+-- ticks the size learned before this cast, else the description's per-tick share. Learned first: descriptions
+-- leave out spell and attack power, so their share sits far below real ticks (Rake: 13 vs 26), and judging by it
+-- took a white hit for the tick and learned that.
 local function referenceTickSize(dot)
     if dot.normalTicks > 1 then
         return (dot.tickSum - dot.lastTickAmount / dot.lastTickShape) / (dot.normalTicks - 1)
@@ -941,19 +941,16 @@ end
 
 -- Returns the target key when this hit was the first tick of a DoT that was waiting for it (so the display
 -- can flash now that the DoT shows), else nil.
--- F1: two same-school ticks landing in the same instant share one signature
--- (key:amount:school:time), so the second was dropped as a cross-token
--- duplicate and its DoT starved into DROP. Track which DoTs the hit already
--- fed and let a repeat feed a different one — but only from the SAME unit
--- token: a repeat from another token is the same hit seen twice and stays
--- dropped, so one hit can never feed two DoTs (no false skull).
+-- The same hit arrives once per unit token showing the mob (target, nameplateN, focus...) and must count once. But
+-- two DoTs of one school can tick for the same amount in the same instant: those are two hits from the same token.
+-- So within an instant each signature (mob, amount, school) remembers its token and the DoTs it fed: a repeat
+-- from the same token feeds another DoT, one from another token is a copy and is dropped (PR #14).
 local combatFrameAt
 local combatFrameHits = {}
 local function onUnitCombat(unit, action, flag, amount, school)
     if isSecret(action) then return end
-    -- DOT-6: an absorbed tick still landed on the mob (the shield ate it),
-    -- so it proves the DoT is alive and keeps its rhythm. Treat ABSORB like
-    -- WOUND for matching, but never let a 0 feed tickSum/learned sizes.
+    -- A fully absorbed tick still landed (a shield ate it): it proves the DoT is on and keeps its rhythm, so ABSORB
+    -- matches like WOUND, but a 0 never feeds tick sizes. With two DoTs it could be, it's ignored.
     local absorbed = action == "ABSORB"
     if not AVOIDED_ACTIONS[action] and action ~= "WOUND" and not absorbed then return end
     local key = unitKey(unit)
@@ -965,10 +962,7 @@ local function onUnitCombat(unit, action, flag, amount, school)
     if not dotsByTarget[key] and not armedTrap then return end
     local dots = dotsByTarget[key] or {}
 
-    -- The same hit fires for target, nameplateN, softenemy...: handle it once.
-    -- F1: a second real same-school tick in the same instant may feed another
-    -- DoT. Repeats from the same unit token feed a different unfed DoT;
-    -- repeats from another token are the same hit seen twice and stay dropped.
+    -- The same hit fires for target, nameplateN, softenemy...: handle it once (see combatFrameHits above).
     local now = GetTime()
     if combatFrameAt ~= now then
         combatFrameHits = {}
