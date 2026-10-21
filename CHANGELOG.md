@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **Korean client:** your DoTs are read on Korean (koKR) clients. If one isn't picked up, a `/did debug` log helps (issue #18 on GitHub).
 - **German options window:** set Advanced > Window language to Deutsch (or Auto on a German client), then /reload. Thanks to thecodingcortex.
 - **French client fixes:** Immolation and Plaie d'agonie are read again. Thanks to gou-gouze.
 - **Tracking fixes** (thanks to Ironship):

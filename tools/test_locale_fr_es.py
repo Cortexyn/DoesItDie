@@ -11,6 +11,8 @@ parse runs first, as in game, so these also check that English patterns never mi
 import os
 import sys
 
+import locale  # noqa: E402
+locale.setlocale(locale.LC_CTYPE, "C")  # as in WoW: Lua's %d and %s follow the C library's locale
 from lupa import lua51
 
 HERE = os.path.dirname(os.path.abspath(__file__))

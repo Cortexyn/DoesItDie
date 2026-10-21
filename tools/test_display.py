@@ -7,6 +7,8 @@ the per-DoT segment logic: running totals, visibility, dividers, colors and the 
 import os
 import sys
 
+import locale  # noqa: E402
+locale.setlocale(locale.LC_CTYPE, "C")  # as in WoW: Lua's %d and %s follow the C library's locale
 from lupa.lua51 import LuaRuntime  # WoW runs Lua 5.1
 
 src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "DoesItDie", "Display.lua"),

@@ -7,6 +7,8 @@ Prints what the addon would track for each cast: total, school, duration, tick i
     python tools/test_parse.py
 """
 import os
+import locale  # noqa: E402
+locale.setlocale(locale.LC_CTYPE, "C")  # as in WoW: Lua's %d and %s follow the C library's locale
 from lupa import LuaRuntime
 
 SRC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "DoesItDie", "DoesItDie.lua")

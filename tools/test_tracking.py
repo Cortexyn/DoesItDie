@@ -9,6 +9,8 @@ Each scenario prints what the marker would count, and PASS/FAIL against the expe
 import os
 import sys
 
+import locale  # noqa: E402
+locale.setlocale(locale.LC_CTYPE, "C")  # as in WoW: Lua's %d and %s follow the C library's locale
 from lupa.lua51 import LuaRuntime  # WoW runs Lua 5.1
 
 # An optional argument tests another copy of DoesItDie.lua (e.g. an older version, to see a test fail).
