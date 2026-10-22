@@ -1,6 +1,8 @@
 # DoesItDie
 
-## Unreleased
+## v0.8.2
+
+**Restart the game fully after updating** (not just /reload): this version adds a new file.
 
 - **Plater:** the nameplate kill icon is back (it went missing in v0.7.0 with some nameplate addons), and Plater's health bar is found more reliably. Thanks to tuwzz for the report.
 - **Threat Plates:** the nameplate marker finds its health bar too.
