@@ -943,9 +943,88 @@ G.DoesItDieDB.customPlateHealthBar = "nothing.here"
 step("  a path that doesn't exist: back to the automatic search", lambda: H.update(0.2))
 check("  on Plater's bar again", ns.plateBarStatus(), "found: unitFrame.healthBar")
 G.DoesItDieDB.customPlateHealthBar = ""
+
+# A field that errors when read (frameworks' objects with a throwing __index), searched before Plater's frame: it
+# used to abort the whole search, so Plater's bar was never found (CurseForge, tuwzz).
+lua.execute("""
+    FakePlate.aaaBomb = setmetatable({}, { __index = function() error("framework object: no such key") end })
+""")
+
+
+def fresh_search():
+    # a different plate frame each time would be cleaner; waiting out the per-plate cache does the same
+    H.update(1.5)
+
+
+def search_again():
+    # The cache keeps a shown bar: hide it for one update so the next search really runs.
+    lua.execute("PlaterBar:Hide()")
+    H.update(0.2)
+    lua.execute("PlaterBar:Show()")
+    H.update(1.5)
+
+
+step("a field that errors when read sits before Plater's frame", search_again)
+check("  Plater's bar still found and drawn on", any(m.shown for m in markers_on(G.PlaterBar)), True)
+
+
+def isolated_search():
+    # The real searchHealthBar on its own, on a plate with a throwing field sorted before a Plater-like frame.
+    # (The fake environment above doesn't reproduce the abort; v0.8.1's search fails this, the current one passes.)
+    import re
+    source = open(os.path.join(ADDON, "Nameplates.lua"), encoding="utf-8").read()
+    code = source[source.index("local function isStatusBar"):source.index("local function autoHealthBar")]
+    code = re.sub(r"^local SEARCH_(DEPTH|INTERVAL) = \d+\n", "", code, flags=re.M)
+    return LuaRuntime().execute("""
+        local function isSecret() return false end
+        local SEARCH_DEPTH, SEARCH_INTERVAL = 4, 1
+        local function frame(kind, parent)
+            local f = { kind = kind, parent = parent, shown = true }
+            function f.GetObjectType(self) return self.kind end
+            function f.GetParent(self) return self.parent end
+            function f.IsVisible(self) return self.shown end
+            function f.GetEffectiveAlpha() return 1 end
+            function f.IsForbidden() return false end
+            return f
+        end
+        local function barShown(bar) return bar:IsVisible() end
+    """ + code + """
+        local plate = frame("Frame", nil)
+        plate.UnitFrame = frame("Frame", plate)
+        plate.aaaBomb = setmetatable({}, { __index = function() error("framework object: no such key") end })
+        plate.unitFrame = frame("Frame", plate)
+        plate.unitFrame.healthBar = frame("StatusBar", plate.unitFrame)
+        local ok, _, path = pcall(searchHealthBar, plate)
+        return ok and path or "search aborted"
+    """)
+
+
+check("  the search itself, run in isolation, gets past the throwing field", isolated_search(), "unitFrame.healthBar")
+
+# Threat Plates keeps its bar in a plain table: TPFrame.visual.healthbar.
+lua.execute("""
+    PlaterBar:Hide(); FakePlate.unitFrame = nil
+    FakePlate.TPFrame = CreateFrame("Frame", nil, FakePlate)
+    FakePlate.TPFrame.visual = {}
+    FakePlate.TPFrame.visual.healthbar = CreateFrame("StatusBar", nil, FakePlate.TPFrame)
+    ThreatBar = FakePlate.TPFrame.visual.healthbar
+""")
+step("Threat Plates-like plate", fresh_search)
+check("  its bar found through the plain table", ns.plateBarStatus(), "found: TPFrame.visual.healthbar")
+check("  marker on it", len(markers_on(G.ThreatBar)), 1)
+
+# Nothing readable and Blizzard's bar hidden: the kill icon alone, beside the plate (as before v0.7.0).
+lua.execute("ThreatBar:Hide(); FakePlate.TPFrame, FakePlate.aaaBomb = nil, nil")
+step("a plate addon we can't read", fresh_search)
+check("  status says so", "kill icon only" in ns.plateBarStatus(), True)
+blizzard_markers = markers_on(G.FakePlate.UnitFrame.healthBar)
+check("  no marker over the hidden bar", any(m.shown for m in blizzard_markers), False)
+icon_windows = [c for c in G.FakePlate.children.values() if c.kind == "Frame" and c.clips]
+check("  but the kill icon shows", any(w.shown for w in icon_windows), True)
+
 lua.execute("""
     FakePlate.UnitFrame:Show()
-    FakePlate.unitFrame, FakePlate.mine = nil, nil
+    FakePlate.unitFrame, FakePlate.mine, FakePlate.TPFrame, FakePlate.aaaBomb = nil, nil, nil, nil
     targetGuid = nil
 """)
 

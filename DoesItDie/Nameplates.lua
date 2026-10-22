@@ -152,39 +152,66 @@ local function isUnder(frame, plate)
     return false
 end
 
+-- A plain Lua table (an addon's own bookkeeping, like Threat Plates' TPFrame.visual), as opposed to a frame.
+local MAX_TABLE_ENTRIES = 200 -- bigger plain tables are settings or caches, not where a plate keeps its bar
+local function isFrame(value)
+    local ok, kind = pcall(function() return value:GetObjectType() end)
+    return ok and type(kind) == "string"
+end
+
+-- The string-keyed table fields of `container`, sorted (the same answer every time). Nil if it can't be read, or
+-- for a plain table that's too big.
+local function tableFields(container, plain)
+    local ok, fields = pcall(function()
+        local found, count = {}, 0
+        for key, value in pairs(container) do
+            count = count + 1
+            if plain and count > MAX_TABLE_ENTRIES then return nil end
+            if type(key) == "string" and type(value) == "table" then table.insert(found, { key, value }) end
+        end
+        return found
+    end)
+    if not ok or not fields then return nil end
+    table.sort(fields, function(a, b) return a[1] < b[1] end)
+    return fields
+end
+
+-- Each field is checked under its own pcall: plate addons build frames with frameworks whose objects may error
+-- when read (an __index that throws), and one such field mustn't stop the whole search.
 local function searchHealthBar(plate)
-    local queue = { { frame = plate, path = "", depth = 0 } }
+    local blizzardBar = plate.UnitFrame and plate.UnitFrame.healthBar
+    local queue = { { node = plate, path = "", depth = 0, plain = false } }
     local seen = { [plate] = true }
     local head = 1
     while queue[head] do
         local item = queue[head]
         head = head + 1
-        local frame = item.frame
-        -- Fields of this frame: a shown StatusBar under a "health" key is the answer; other frames are visited.
-        local ok, fields = pcall(function()
-            local found = {}
-            for key, value in pairs(frame) do
-                if type(key) == "string" and type(value) == "table" then table.insert(found, { key, value }) end
-            end
-            return found
-        end)
-        if ok then
-            table.sort(fields, function(a, b) return a[1] < b[1] end) -- the same answer every time
+        local fields = tableFields(item.node, item.plain)
+        if fields then
+            -- A shown StatusBar under a "health" key, inside the plate, is the answer.
             for _, field in ipairs(fields) do
                 local key, value = field[1], field[2]
-                if key:lower():find("health", 1, true) and isStatusBar(value) and not forbidden(value)
-                    and isUnder(value, plate) and barShown(value)
-                    and value ~= (plate.UnitFrame and plate.UnitFrame.healthBar) then
-                    return value, item.path .. key
-                end
+                local ok, found = pcall(function()
+                    return key:lower():find("health", 1, true) and value ~= blizzardBar and isStatusBar(value)
+                        and not forbidden(value) and isUnder(value, plate) and barShown(value)
+                end)
+                if ok and found then return value, item.path .. key end
             end
+            -- Else go one level deeper: frames inside the plate (not Blizzard's UnitFrame), and plain tables.
             if item.depth < SEARCH_DEPTH then
                 for _, field in ipairs(fields) do
                     local key, value = field[1], field[2]
-                    if not seen[value] and value ~= plate.UnitFrame and type(value.GetObjectType) == "function"
-                        and not isStatusBar(value) and not forbidden(value) and isUnder(value, plate) then
+                    if not seen[value] and value ~= plate.UnitFrame then
                         seen[value] = true
-                        table.insert(queue, { frame = value, path = item.path .. key .. ".", depth = item.depth + 1 })
+                        local frame = isFrame(value)
+                        local ok, visit = pcall(function()
+                            if frame then return not isStatusBar(value) and not forbidden(value) and isUnder(value, plate) end
+                            return true
+                        end)
+                        if ok and visit then
+                            table.insert(queue, { node = value, path = item.path .. key .. ".", depth = item.depth + 1,
+                                plain = not frame })
+                        end
                     end
                 end
             end
@@ -213,7 +240,7 @@ end
 --     UIParent), so our widgets stay on Blizzard's plate and only anchor to its bar.
 --   * Blizzard's own bar, while it's shown
 --   * the automatic search (searchHealthBar), for other plate addons
---   * Blizzard's bar, hidden: nothing is drawn (the probe still reports it)
+--   * Blizzard's bar, hidden: only the kill icon is drawn, beside the plate (iconOnly)
 local function findHealthBar(plate, unit)
     local db = ns.db
     local custom = db and strtrim(db.customPlateHealthBar or "") or ""
@@ -244,7 +271,9 @@ local function findHealthBar(plate, unit)
     if blizzard and barShown(blizzard) then return blizzard, plate, blizzardPath, false end
     local found, path = autoHealthBar(plate)
     if found then return found, plate, "auto " .. path, true end
-    if blizzard then return blizzard, plate, blizzardPath, false end
+    -- Nothing found and Blizzard's bar hidden: a plate addon we can't read. A marker on the hidden bar would float
+    -- over nothing, but the kill icon beside the plate still says "this one dies" (as before v0.7.0): icon only.
+    if blizzard then return blizzard, plate, blizzardPath .. " (hidden: kill icon only)", false, true end
     return nil, nil, unitFrame and "no health bar found" or "no UnitFrame"
 end
 
@@ -491,12 +520,12 @@ end
 local function updatePlate(unit, plate, db)
     local entries, total = ns.dotBreakdownForUnit(unit)
     if total <= 0 or unitIsDead(unit) then return end
-    local healthBar, host, path, addonBar = findHealthBar(plate, unit)
-    if not healthBar or not barShown(healthBar) then return end
+    local healthBar, host, path, addonBar, iconOnly = findHealthBar(plate, unit)
+    if not healthBar or (not iconOnly and not barShown(healthBar)) then return end
     seenHosts[host] = true
     lastBarPath = path
-    drawPlate(widgetsFor(host, healthBar, host ~= plate, addonBar), entries, total, UnitHealthMax(unit),
-        UnitHealth(unit), db)
+    local w = widgetsFor(host, healthBar, host ~= plate, addonBar)
+    if drawPlate(w, entries, total, UnitHealthMax(unit), UnitHealth(unit), db) and iconOnly then w.marker:Hide() end
 end
 
 -- The options window's mock nameplate: { plate, healthBar } plus its preview state ({ health, dots } in % of
