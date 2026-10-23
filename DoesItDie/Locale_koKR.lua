@@ -35,6 +35,7 @@ local NAMES = {
     ["Insect Swarm"] = { "곤충 떼" },
     ["Bane of Agony"] = { "고통의 파멸" },
     ["Curse of Agony"] = { "고통의 저주" },
+    ["Corruption"] = { "부패" },
     ["Fireball"] = { "화염구" },
     ["Holy Fire"] = { "신성한 불꽃" },
     ["Rip"] = { "도려내기" },

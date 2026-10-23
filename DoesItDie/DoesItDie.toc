@@ -12,6 +12,8 @@ Locale_deDE.lua
 Locale_esES.lua
 Locale_frFR.lua
 Locale_koKR.lua
+Locale_ptBR.lua
+Locale_zhCN.lua
 DoesItDie.lua
 Display.lua
 Frames.lua
