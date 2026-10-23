@@ -1,6 +1,8 @@
 # DoesItDie
 
-## Unreleased
+## v0.8.3
+
+**Restart the game fully after updating** (not just /reload): this version adds new files.
 
 - **Portuguese (Brazil) and Chinese (Traditional and Simplified) clients:** your DoTs are read there too. If one isn't picked up, a `/did debug` log helps (issues #19 and #20 on GitHub).
 
